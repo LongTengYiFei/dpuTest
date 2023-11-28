@@ -10,9 +10,10 @@
 
 int main(){
     struct timeval start,end;
-    int fd = open("./testfile/linux-6.7-rc2.tar", O_RDWR);  
-    char * data = (char*)malloc(sizeof(char)*MB);
-    long long n_read = read(fd, data, MB);
+    int fd = open("./testfile/linux-6.7-rc2.tar", O_RDWR);
+    int src_len = 4*1024*8;  
+    char * data = (char*)malloc(sizeof(char)*src_len);
+    long long n_read = read(fd, data, src_len);
     
     printf("n_read = %lld\n", n_read);
     unsigned char digest[SHA512_DIGEST_LENGTH];

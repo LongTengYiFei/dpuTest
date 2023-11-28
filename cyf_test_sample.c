@@ -247,13 +247,15 @@ sha_create_cyf(char *src_buffer, long long src_len, int job_num)
 		gettimeofday(&end1, NULL );
 		timeuse_enqueue+=  1000000 * ( end1.tv_sec - start1.tv_sec ) + end1.tv_usec - start1.tv_usec;  
 	}  
-	printf("Enqueue jobs time = %ld us\n"); 
+	printf("Enqueue jobs time = %ld us\n", timeuse_enqueue); 
 
 	/* Wait for job completion */
 	struct doca_event* events = (struct doca_event*)calloc(job_num, sizeof(struct doca_event));
 	struct timeval start,end;  
-	gettimeofday(&start, NULL );  
+	
+	long timeuse_retrieve = 0;  
 	for(int i=0; i<=job_num-1; i++){
+		gettimeofday(&start, NULL );
 		while ((result = doca_workq_progress_retrieve(state.workq, &events[i], DOCA_WORKQ_RETRIEVE_FLAGS_NONE)) ==
 	       DOCA_ERROR_AGAIN) {
 			/* Wait for the job to complete */
@@ -261,6 +263,8 @@ sha_create_cyf(char *src_buffer, long long src_len, int job_num)
 			ts.tv_nsec = SLEEP_IN_NANOS;
 			nanosleep(&ts, &ts);
 		}
+		gettimeofday(&end, NULL );  
+		timeuse_retrieve += 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec;
 		
 		if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to retrieve sha job: %s", doca_get_error_string(result));
@@ -283,9 +287,7 @@ sha_create_cyf(char *src_buffer, long long src_len, int job_num)
 			doca_buf_refcount_rm(dst_doca_bufs[i], NULL) != DOCA_SUCCESS)
 			DOCA_LOG_ERR("Failed to decrease DOCA buffer reference count");
 	}
-	gettimeofday(&end, NULL );  
-	long timeuse = 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec;  
-	printf("retrieve wait time = %ld us\n", timeuse);  
+	printf("retrieve wait time = %ld us\n", timeuse_retrieve);  
 
 	/* Clean and destroy all relevant objects */
 	sha_cleanup(&state, sha_ctx);

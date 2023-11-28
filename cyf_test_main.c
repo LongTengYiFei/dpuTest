@@ -105,11 +105,15 @@ main(int argc, char **argv)
 	if(fd<=0){
 		printf("open source file error\n");
 	}
-    char * src_data = (char*)malloc(sizeof(char)*MB);
+
+	int block_size = 4*1024;
+	int job_num = 8;
+	int src_len = block_size*job_num;
+    char * src_data = (char*)malloc(sizeof(char)*src_len);
 	if(!src_data){
 		printf("malloc error\n");
 	}
-    long long n_read = read(fd, src_data, MB);
+    long long n_read = read(fd, src_data, src_len);
     printf("n_read = %lld\n", n_read);
 
 	result = doca_log_create_file_backend(stdout, &stdout_logger);
@@ -136,8 +140,6 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	int job_num = 1;
-	printf("job num = %d\n", job_num);
 	result = sha_create_cyf(src_data, n_read, job_num);
 	if (result != DOCA_SUCCESS)
 		exit_status = EXIT_FAILURE;
