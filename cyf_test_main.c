@@ -33,7 +33,7 @@ DOCA_LOG_REGISTER(SHA_CREATE::MAIN);
 #define MB 1048576ll
 
 /* Sample's Logic */
-doca_error_t sha_create_cyf(char *src_buffer, int len, int job_num);
+doca_error_t sha_create_cyf(char *src_buffer, long long src_len, int block_size, int queue_depth);
 
 /*
  * ARGP Callback - Handle user data parameter
@@ -106,9 +106,10 @@ main(int argc, char **argv)
 		printf("open source file error\n");
 	}
 
-	int block_size = 4*1024;
-	int job_num = 8;
-	int src_len = block_size*job_num;
+	int block_size = 64*1024;
+	int queue_depth = 8;
+	int block_num = 64;
+	int src_len = block_size*block_num;
     char * src_data = (char*)malloc(sizeof(char)*src_len);
 	if(!src_data){
 		printf("malloc error\n");
@@ -140,9 +141,7 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 
-	result = sha_create_cyf(src_data, n_read, job_num);
-	if (result != DOCA_SUCCESS)
-		exit_status = EXIT_FAILURE;
+	sha_create_cyf(src_data, src_len, block_size, queue_depth);
 
 	doca_argp_destroy();
 	return exit_status;
