@@ -250,13 +250,13 @@ sha_create_cyf(char *src_buffer, long long src_len, int job_num)
 	printf("Enqueue jobs time = %ld us\n", timeuse_enqueue); 
 
 	/* Wait for job completion */
-	struct doca_event* events = (struct doca_event*)calloc(job_num, sizeof(struct doca_event));
+	struct doca_event event = {0};
 	struct timeval start,end;  
 	
 	long timeuse_retrieve = 0;  
 	for(int i=0; i<=job_num-1; i++){
 		gettimeofday(&start, NULL );
-		while ((result = doca_workq_progress_retrieve(state.workq, &events[i], DOCA_WORKQ_RETRIEVE_FLAGS_NONE)) ==
+		while ((result = doca_workq_progress_retrieve(state.workq, &event, DOCA_WORKQ_RETRIEVE_FLAGS_NONE)) ==
 	       DOCA_ERROR_AGAIN) {
 			/* Wait for the job to complete */
 			ts.tv_sec = 0;
@@ -269,11 +269,11 @@ sha_create_cyf(char *src_buffer, long long src_len, int job_num)
 		if (result != DOCA_SUCCESS)
 		DOCA_LOG_ERR("Failed to retrieve sha job: %s", doca_get_error_string(result));
 
-		else if (events[i].result.u64 != DOCA_SUCCESS)
+		else if (event.result.u64 != DOCA_SUCCESS)
 			DOCA_LOG_ERR("SHA job finished unsuccessfully");
 
-		else if (((int)(events[i].type) != (int)DOCA_SHA_JOB_SHA512) ||
-			(events[i].user_data.u64 != DOCA_SHA_JOB_SHA512))
+		else if (((int)(event.type) != (int)DOCA_SHA_JOB_SHA512) ||
+			(event.user_data.u64 != DOCA_SHA_JOB_SHA512))
 			DOCA_LOG_ERR("Received wrong event");
 
 		else {
