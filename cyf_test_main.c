@@ -102,14 +102,14 @@ main(int argc, char **argv)
 	struct doca_logger_backend *stdout_logger = NULL;
 	int exit_status = EXIT_SUCCESS;
 
-	int fd = open("../testfile/linux-6.7-rc2.tar", O_RDWR);  
+	int fd = open("./testfile/linux-6.7-rc2.tar", O_RDWR);  
 	if(fd<=0){
 		printf("open source file error\n");
 	}
 
-	int block_size = 64*1024;
+	int block_size = 16*1024;
 	int queue_depth = 8;
-	int block_num = 64;
+	int block_num = 8;
 	int src_len = block_size*block_num;
     char * src_data = (char*)malloc(sizeof(char)*src_len);
 	if(!src_data){

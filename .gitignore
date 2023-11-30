@@ -3,3 +3,5 @@
 ./build/*
 testfile/linux-6.7-rc2.tar
 a.out
+doca_test
+arm_test
