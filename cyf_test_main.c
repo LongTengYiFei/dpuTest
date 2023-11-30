@@ -34,6 +34,7 @@ DOCA_LOG_REGISTER(SHA_CREATE::MAIN);
 
 /* Sample's Logic */
 doca_error_t sha_create_cyf(char *src_buffer, long long src_len, int block_size, int queue_depth);
+doca_error_t sha_create_cyf2(char *src_buffer, long long src_len, int block_size, int queue_depth);
 
 /*
  * ARGP Callback - Handle user data parameter
@@ -142,7 +143,7 @@ main(int argc, char **argv)
 	}
 
 	sha_create_cyf(src_data, src_len, block_size, queue_depth);
-
+	
 	doca_argp_destroy();
 	return exit_status;
 }

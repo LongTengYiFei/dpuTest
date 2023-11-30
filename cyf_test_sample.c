@@ -133,7 +133,7 @@ void submitThread(void* args){
 		if(i<=sa->queue_depth-1){
 			/* Source: Construct DOCA buffer for each address range */
 			result = doca_buf_inventory_buf_by_addr(sa->state->buf_inv, sa->state->src_mmap, sa->src_buffer+sa->block_size*i, sa->block_size,
-							&sa->src_doca_bufs[i%sa->queue_depth]);
+													&sa->src_doca_bufs[i%sa->queue_depth]);
 			if (result == DOCA_ERROR_INVALID_VALUE) {
 				DOCA_LOG_ERR("DOCA_ERROR_INVALID_VALUE");
 			}else if(result == DOCA_ERROR_NO_MEMORY){
@@ -144,7 +144,7 @@ void submitThread(void* args){
 				return result;
 			}
 		}
-		
+
 		result = doca_buf_set_data(sa->src_doca_bufs[i%sa->queue_depth], sa->src_buffer+sa->block_size*i, sa->block_size);
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("doca_buf_set_data() for request doca_buf failure");
@@ -156,14 +156,14 @@ void submitThread(void* args){
 		if(i<=sa->queue_depth-1){
 			/* Destination: Construct DOCA buffer for each address range */
 			result = doca_buf_inventory_buf_by_addr(sa->state->buf_inv, sa->state->dst_mmap, sa->dst_buffer+DOCA_SHA512_BYTE_COUNT*(i%sa->queue_depth), DOCA_SHA512_BYTE_COUNT,
-								&sa->dst_doca_bufs[i%sa->queue_depth]);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s", doca_get_error_string(result));
-				doca_buf_refcount_rm(sa->src_doca_bufs[i%sa->queue_depth], NULL);
-				sha_cleanup(&sa->state, sa->sha_ctx);
-				return result;
-			}
+							&sa->dst_doca_bufs[i%sa->queue_depth]);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s", doca_get_error_string(result));
+			doca_buf_refcount_rm(sa->src_doca_bufs[i%sa->queue_depth], NULL);
+			sha_cleanup(&sa->state, sa->sha_ctx);
+			return result;
 		}
+}
 
 		sa->sha_jobs[i%sa->queue_depth]->resp_buf = sa->dst_doca_bufs[i%sa->queue_depth];
 		sa->sha_jobs[i%sa->queue_depth]->req_buf = sa->src_doca_bufs[i%sa->queue_depth];
@@ -192,7 +192,7 @@ typedef struct
 	struct program_core_objects* state; 
 	struct doca_sha *sha_ctx;
 	struct doca_sha_job** sha_jobs;
-	int queue_depth;
+		int queue_depth;
 	int block_num;
 }RetrieveArg;
 
@@ -241,7 +241,7 @@ void retrieveThread(void* args){
 			DOCA_LOG_INFO("SHA512 output is: %s", sha_output);
 		}
 
-	}
+			}
 	printf("Retrieve wait time = %ld us\n", timeuse_retrieve);  
 }
 
@@ -366,7 +366,7 @@ sha_create_cyf(char *src_buffer, long long src_len, int block_size, int queue_de
 		.state = &state, 
 		.sha_ctx = sha_ctx,
 		.sha_jobs = sha_jobs, 
-		.queue_depth = queue_depth,
+				.queue_depth = queue_depth,
 		.block_num = block_num,
 	};
 	
@@ -388,4 +388,175 @@ sha_create_cyf(char *src_buffer, long long src_len, int block_size, int queue_de
 	return ;
 }
 
+void
+sha_create_cyf2(char *src_buffer, long long src_len, int block_size, int block_num)
+{
+	struct program_core_objects state = {0};
+	struct doca_sha *sha_ctx;
+	doca_error_t result;
+	struct doca_event event = {0};
+	struct timespec ts;
+	uint8_t *resp_head;
+
+	uint32_t workq_depth = block_num;	
+	uint32_t max_bufs = 2*block_num;
+
+	printf("block num %d\n", block_num);
+
+	
+	result = doca_sha_create(&sha_ctx);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Unable to create sha engine: %s", doca_get_error_string(result));
+		return result;
+	}
+
+	state.ctx = doca_sha_as_ctx(sha_ctx);
+
+	result = open_doca_device_with_capabilities(&job_sha_hardware_is_supported, &state.dev);
+	if (result != DOCA_SUCCESS) {
+		result = open_doca_device_with_capabilities(&job_sha_software_is_supported, &state.dev);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to find device for SHA job");
+			result = doca_sha_destroy(sha_ctx);
+			return result;
+		}
+		DOCA_LOG_WARN("SHA engine is not enabled, using openssl instead");
+	}
+
+
+	result = init_core_objects(&state, workq_depth, max_bufs);
+	if (result != DOCA_SUCCESS) {
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+
+	// destination memory (sha result) init
+	char* dst_buffer = (char*)malloc(sizeof(char)*block_num*DOCA_SHA512_BYTE_COUNT);
+	result = doca_mmap_set_memrange(state.dst_mmap, dst_buffer, DOCA_SHA512_BYTE_COUNT*block_num);
+	if (result != DOCA_SUCCESS) {
+		free(dst_buffer);
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+	
+	result = doca_mmap_set_free_cb(state.dst_mmap, &free_cb, NULL);
+	if (result != DOCA_SUCCESS) {
+		free(dst_buffer);
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+	
+	result = doca_mmap_start(state.dst_mmap);
+	if (result != DOCA_SUCCESS) {
+		free(dst_buffer);
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+	doca_mmap_set_permissions(state.dst_mmap, DOCA_ACCESS_LOCAL_READ_WRITE);
+
+	// source memory init
+	result = doca_mmap_set_memrange(state.src_mmap, src_buffer, src_len);
+	if (result != DOCA_SUCCESS) {
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+	result = doca_mmap_start(state.src_mmap);
+	if (result != DOCA_SUCCESS) {
+		sha_cleanup(&state, sha_ctx);
+		return result;
+	}
+	doca_mmap_set_permissions(state.src_mmap, DOCA_ACCESS_LOCAL_READ_WRITE);
+
+	struct doca_buf **src_doca_bufs;
+	struct doca_buf **dst_doca_bufs;
+	src_doca_bufs = (struct doca_buf **)malloc(sizeof(struct doca_buf *)*block_num);
+	dst_doca_bufs = (struct doca_buf **)malloc(sizeof(struct doca_buf *)*block_num);
+	
+	struct timeval start1,end1;
+    long long timeuse_submit = 0;
+
+	for (int j = 0; j < block_num; ++j) {
+		result = doca_buf_inventory_buf_by_addr(state.buf_inv, 
+											state.src_mmap, 
+											src_buffer + (j * block_size),
+											block_size, &src_doca_bufs[j]);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Unable to acquire DOCA buffer representing source buffer: %s", doca_get_error_string(result));
+			sha_cleanup(&state, sha_ctx);
+			return result;
+		}
+
+		/* Set data address and length in the doca_buf */
+		result = doca_buf_set_data(src_doca_bufs[j], src_buffer + (j * block_size), block_size);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("doca_buf_set_data() for request doca_buf failure");
+			doca_buf_refcount_rm(src_doca_bufs[j], NULL);
+			sha_cleanup(&state, sha_ctx);
+			return result;
+		}
+
+		result = doca_buf_inventory_buf_by_addr(state.buf_inv, state.dst_mmap, 
+											dst_buffer + (j * DOCA_SHA512_BYTE_COUNT),
+											DOCA_SHA512_BYTE_COUNT, &dst_doca_bufs[j]);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s", doca_get_error_string(result));
+			sha_cleanup(&state, sha_ctx);
+			return result;
+		} 
+
+		const struct doca_sha_job sha_job = {
+			.base = (struct doca_job) {
+				.type = DOCA_SHA_JOB_SHA512,
+				.flags = DOCA_JOB_FLAGS_NONE,
+				.ctx = state.ctx,
+				.user_data.u64 = DOCA_SHA_JOB_SHA512,
+				},
+			.resp_buf = dst_doca_bufs[j],
+			.req_buf = src_doca_bufs[j],
+			.flags = DOCA_SHA_JOB_FLAGS_NONE,
+		};
+
+		/* Enqueue sha job */
+		gettimeofday(&start1, 0);
+		doca_error_t result = doca_workq_submit(state.workq, &sha_job.base);
+		if (result != DOCA_SUCCESS) {
+			DOCA_LOG_ERR("Failed to submit sha job: %s", doca_get_error_string(result));
+			sha_cleanup(&state, sha_ctx);
+			return result;
+		}
+		gettimeofday(&end1, 0); 
+		timeuse_submit += 1000000 * ( end1.tv_sec - start1.tv_sec ) + end1.tv_usec - start1.tv_usec;
+	}
+	printf("time submit = %ld us\n", timeuse_submit);  
+
+	struct timeval start2,end2;
+    long long timeuse_retrieve = 0;
+	for (int j = 0; j < block_num; ++j) {
+		gettimeofday(&start2, 0); 
+		/* Wait for job completion */
+		while ((result = doca_workq_progress_retrieve(state.workq, &event, DOCA_WORKQ_RETRIEVE_FLAGS_NONE)) ==
+			DOCA_ERROR_AGAIN) {
+			/* Wait for the job to complete */
+			ts.tv_sec = 0;
+			ts.tv_nsec = SLEEP_IN_NANOS;
+			nanosleep(&ts, &ts);
+		}
+		gettimeofday(&end2, 0); 
+		timeuse_retrieve += 1000000 * ( end2.tv_sec - start2.tv_sec ) + end2.tv_usec - start2.tv_usec;
+
+		if (result != DOCA_SUCCESS)
+			DOCA_LOG_ERR("Failed to retrieve sha job: %s", doca_get_error_string(result));
+		else if (event.result.u64 != DOCA_SUCCESS)
+			DOCA_LOG_ERR("SHA job finished unsuccessfully");
+		else {
+			printf("SHA512: ");
+			for (int i = 0; i < DOCA_SHA512_BYTE_COUNT; i++)
+			{
+				printf("%02x", dst_buffer[j*DOCA_SHA512_BYTE_COUNT+i]);
+			}
+			printf("\n");
+		}
+	}
+	printf("time retrieve = %ld us\n", timeuse_retrieve);  
+}
 
