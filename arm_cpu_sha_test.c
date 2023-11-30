@@ -16,11 +16,12 @@ int main(){
            perror("mmap") ;
     }  
 
-    int block_size = 4*1024;
-    int block_num = 128; 
+    int block_size = 16*1024;
+    int block_num = 16; 
 
     unsigned char digest[SHA512_DIGEST_LENGTH];
     struct timeval start,end;
+    long long timeuse = 0;
     for(int i=0; i<=block_num-1; i++){
         gettimeofday(&start, 0); 
         SHA512_CTX shactx;
@@ -29,13 +30,14 @@ int main(){
         SHA512_Final(digest, &shactx);
         gettimeofday(&end, 0); 
 
+        timeuse += 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec; 
+
         printf("SHA512: ");
         for (int j = 0; j < SHA512_DIGEST_LENGTH; j++)
 			printf("%02x", digest[j]);
         printf("\n");
     }
     
-	long timeuse = 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec;  
 	printf("time = %ld us\n", timeuse);  
     return 0;
 }
