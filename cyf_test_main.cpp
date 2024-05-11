@@ -99,7 +99,11 @@ register_sha_params()
 #include <pthread.h>
 #include <openssl/sha.h>
 #include <sys/time.h>
+#include <vector>
+#include <algorithm>
+#include <iostream>
 #define SLEEP_IN_NANOS (1000) /* Sample the job every 10 microseconds  */
+using namespace std;
 
 static doca_error_t
 job_sha_hardware_is_supported(struct doca_devinfo *devinfo)
@@ -133,14 +137,14 @@ doca_error_t result;
 struct doca_event event = {0};
 struct timespec ts;
 uint8_t *resp_head;
-uint32_t workq_depth = 1024;	
+uint32_t workq_depth = 10;	
 uint32_t max_bufs = workq_depth*2;
-uint32_t round = 40;
+uint32_t round = 2;
 struct doca_buf **src_doca_buf;
 struct doca_buf **dst_doca_buf;
 struct doca_sha_job *sha_jobs;
 
-doca_error_t doca_SHA_batch_prepare(const unsigned char* src_buf, size_t chunk_size, unsigned char* dst_buf){
+doca_error_t doca_SHA_batch_prepare(const unsigned char* src_buf, unsigned char* dst_buf, int queue_size, int batch_size){
 	result = doca_sha_create(&sha_ctx);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("Unable to create sha engine: %s", doca_get_error_string(result));
@@ -159,34 +163,32 @@ doca_error_t doca_SHA_batch_prepare(const unsigned char* src_buf, size_t chunk_s
 		DOCA_LOG_WARN("SHA engine is not enabled, using openssl instead");
 	}
 
-	init_core_objects(&state, workq_depth, max_bufs);
+	init_core_objects(&state, queue_size, queue_size*2);
 
-	src_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * workq_depth);
-	dst_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * workq_depth);
-	sha_jobs = (struct doca_sha_job*)malloc(sizeof(struct doca_sha_job) * workq_depth);
+	src_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * queue_size);
+	dst_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * queue_size);
+	sha_jobs = (struct doca_sha_job*)malloc(sizeof(struct doca_sha_job) * queue_size);
 
-	doca_mmap_set_memrange(state.src_mmap, (void*)src_buf, chunk_size * workq_depth);
+	doca_mmap_set_memrange(state.src_mmap, (void*)src_buf, batch_size);
 	doca_mmap_start(state.src_mmap);
 	doca_mmap_set_permissions(state.src_mmap, DOCA_ACCESS_LOCAL_READ_WRITE);
 
 	// destination memory (sha result) init
-	doca_mmap_set_memrange(state.dst_mmap, (void*)dst_buf, DOCA_SHA1_BYTE_COUNT * workq_depth);
+	doca_mmap_set_memrange(state.dst_mmap, (void*)dst_buf, DOCA_SHA1_BYTE_COUNT * queue_size);
 	doca_mmap_set_free_cb(state.dst_mmap, &free_cb, NULL);
 	doca_mmap_start(state.dst_mmap);
 	doca_mmap_set_permissions(state.dst_mmap, DOCA_ACCESS_LOCAL_READ_WRITE);
 
-	for(int i=0; i<=workq_depth-1; i++){
-	doca_buf_inventory_buf_by_addr(state.buf_inv, 
-											state.src_mmap, 
-											(void*)src_buf + i*chunk_size,
-											chunk_size, &src_doca_buf[i]);
-	doca_buf_set_data(src_doca_buf[i], (void*)src_buf + i*chunk_size, chunk_size);
+	for(int i=0; i<=queue_size-1; i++){
+		doca_buf_inventory_buf_by_addr(state.buf_inv, 
+												state.src_mmap, 
+												(void*)src_buf,
+												1, &src_doca_buf[i]);
 
-
-	doca_buf_inventory_buf_by_addr(state.buf_inv, state.dst_mmap, 
-											(void*)dst_buf + i*DOCA_SHA1_BYTE_COUNT,
-											DOCA_SHA1_BYTE_COUNT, &dst_doca_buf[i]);
-													sha_jobs[i].base.type = DOCA_SHA_JOB_SHA1;
+		doca_buf_inventory_buf_by_addr(state.buf_inv, state.dst_mmap, 
+												(void*)dst_buf + i*DOCA_SHA1_BYTE_COUNT,
+												DOCA_SHA1_BYTE_COUNT, &dst_doca_buf[i]);
+														sha_jobs[i].base.type = DOCA_SHA_JOB_SHA1;
 		sha_jobs[i].base.flags = DOCA_JOB_FLAGS_NONE;
 		sha_jobs[i].base.ctx = state.ctx;
 		sha_jobs[i].base.user_data.u64 = DOCA_SHA_JOB_SHA1;
@@ -196,52 +198,89 @@ doca_error_t doca_SHA_batch_prepare(const unsigned char* src_buf, size_t chunk_s
 	}
 }
 
-doca_error_t doca_SHA_batch(const unsigned char* src_buf, size_t chunk_size, unsigned char* dst_buf){
+doca_error_t doca_SHA_batch(const unsigned char* src_buf, unsigned char* doca_sha_bufs, vector<int> size_list){
+	int offset = 0;
+	for(int i=0; i<=size_list.size()-1; i++){
+		doca_buf_set_data(src_doca_buf[i], (void*)src_buf + offset, size_list[i]);
+		offset += size_list[i];
+	}
 
-	for(int i=0; i<=workq_depth-1; i++){
+	struct timeval start, end;
+	for(int i=0; i<=size_list.size()-1; i++){
 		doca_workq_submit(state.workq, &sha_jobs[i].base);
 	}
-	
-	for(int i=0; i<=workq_depth-1; i++){
+
+	gettimeofday(&start, 0);
+	for(int i=0; i<=size_list.size()-1; i++){
 		while ((result = doca_workq_progress_retrieve(state.workq, &event, DOCA_WORKQ_RETRIEVE_FLAGS_NONE)) ==
 			DOCA_ERROR_AGAIN) {
 			/* Wait for the job to complete */
-			ts.tv_sec = 0;
-			ts.tv_nsec = SLEEP_IN_NANOS;
-			nanosleep(&ts, &ts);
+			// ts.tv_sec = 0;
+			// ts.tv_nsec = SLEEP_IN_NANOS;
+			// nanosleep(&ts, &ts);
 		}
+
+		printf("doca SHA1: ");
+		for (int j = 0; j < DOCA_SHA1_BYTE_COUNT; j++)
+			printf("%02x", doca_sha_bufs[i*DOCA_SHA1_BYTE_COUNT + j]);
+		printf("\n");
 	}
+	// gettimeofday(&end, 0); 
+	// int time_use = 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec;
+	// printf("%d\n", time_use);
+
+
 }
 
+int sizeGen(){
+	return (rand() % (5000-4000+1))+4000;
+}
 
 int main(){
 	int fd = open("./testfile/linux-6.7-rc2.tar", O_RDWR);  
 	if(fd<=0){
 		printf("open source file error\n");
-	}
+	}	
 
 	// prepare
+	int batch_size = 4*1024*15;
 	unsigned char sha_buf[DOCA_SHA1_BYTE_COUNT]={0};
-	unsigned char *doca_sha_bufs = (unsigned char *)malloc(DOCA_SHA1_BYTE_COUNT * workq_depth);;
-
-	int chunk_size = 4*1024;
 	int dst_len = DOCA_SHA1_BYTE_COUNT;
-	char * src_data = (char*)malloc(chunk_size*workq_depth);
+	unsigned char * src_data = (unsigned char*)malloc(batch_size*round);
+	unsigned char *doca_sha_bufs = (unsigned char *)malloc(DOCA_SHA1_BYTE_COUNT * 30);;
+	doca_SHA_batch_prepare((unsigned char*)src_data, doca_sha_bufs, 30, batch_size);
 
-	doca_SHA_batch_prepare((unsigned char*)src_data, chunk_size, doca_sha_bufs);
-
-	struct timeval start, end;
 	for(int r=0; r<=round-1; r++){
-		read(fd, src_data, chunk_size*workq_depth);
+		read(fd, src_data, batch_size);
 		
-		gettimeofday(&start, 0); 
-		doca_SHA_batch((unsigned char*)src_data, chunk_size, doca_sha_bufs);
-		gettimeofday(&end, 0); 
+		vector<int> size_list;
+		int rest = batch_size;
+		int size = 0;
+		while(rest){
+			size = sizeGen();
+			if(rest < size){
+				size = rest;
+				size_list.push_back(size);
+				break;
+			}
+			size_list.push_back(size);
+			rest-=size;
+		}
 
-		int time_use = 1000000 * ( end.tv_sec - start.tv_sec ) + end.tv_usec - start.tv_usec;
-		printf("%d\n", time_use);
+		int offset = 0;
+		for(int i=0; i<=size_list.size()-1; i++){
+			SHA1(src_data+offset, size_list[i], doca_sha_bufs+i*20);
+			printf("doca SHA1: ");
+			for (int j = 0; j < DOCA_SHA1_BYTE_COUNT; j++)
+				printf("%02x", doca_sha_bufs[i*DOCA_SHA1_BYTE_COUNT + j]);
+			printf("\n");
+			offset+=size_list[i];
+		}
+		cout<<"sha round over"<<endl;
 
 
+		doca_SHA_batch((unsigned char*)src_data, doca_sha_bufs, size_list);
+		cout<<"doca round over"<<endl;
 	}
 }
 
