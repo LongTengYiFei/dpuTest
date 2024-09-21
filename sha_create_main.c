@@ -28,8 +28,10 @@ DOCA_LOG_REGISTER(SHA_CREATE::MAIN);
 #define MAX_DATA_LEN (MAX_USER_DATA_LEN + 1) /* max data length */
 #define MIN_USER_DATA_LEN 1		     /* min user data length */
 
+#define GB (1024*1024*1024)
+
 /* Sample's Logic */
-doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size);
+doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size, int batch_num);
 
 /*
  * ARGP Callback - Handle user data parameter
@@ -95,13 +97,17 @@ int main(int argc, char **argv)
 	int exit_status = EXIT_FAILURE;
 	
 	// args
-	int batch_size = 256;
-	int unit_size = 8*1024;
-	int total_size = batch_size * unit_size;
+	// doca 更新后，一个满队列只能是2MB数据
+	int batch_size = 128;
+	int unit_size = 16*1024;
+	int total_size = GB;
+	int batch_num = total_size / (batch_size * unit_size);
 
 	// random data gen
-	char* data = (char*)malloc(unit_size * batch_size);
-	for(int i=0; i<=total_size-1; i++){
+	// 一个满队列的数据多算几遍，就不真的生成1GB数据了
+	int real_data_size = unit_size * batch_size;
+	char* data = (char*)malloc(real_data_size);
+	for(int i=0; i<=real_data_size-1; i++){
 		data[i] = 'b' + rand() % 26;
 	}
 
@@ -138,7 +144,7 @@ int main(int argc, char **argv)
 		goto argp_cleanup;
 	}
 
-	result = sha_create(data, unit_size, batch_size);
+	result = sha_create(data, unit_size, batch_size, batch_num);
 	if (result != DOCA_SUCCESS) {
 		DOCA_LOG_ERR("sha_create() encountered an error: %s", doca_error_get_descr(result));
 		goto argp_cleanup;

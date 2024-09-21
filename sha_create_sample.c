@@ -34,7 +34,7 @@ DOCA_LOG_REGISTER(SHA_CREATE);
 
 #define SLEEP_IN_NANOS (10 * 1000)			 /* Sample the task every 10 microseconds  */
 #define LOG_NUM_SHA_TASKS (0)				 /* Log of SHA tasks number */
-#define SHA_SAMPLE_ALGORITHM (DOCA_SHA_ALGORITHM_SHA256) /* doca_sha_algorithm for the sample */
+#define SHA_SAMPLE_ALGORITHM (DOCA_SHA_ALGORITHM_SHA512) /* doca_sha_algorithm for the sample */
 #define SHA256_LEN 32
 struct sha_resources {
 	struct program_core_objects state; /* Core objects that manage our "state" */
@@ -115,12 +115,17 @@ static void sha_hash_completed_callback(struct doca_sha_task_hash *sha_hash_task
 	//DOCA_LOG_INFO("SHA hash task has completed successfully");
 
 	/* Free task */
-	doca_task_free(doca_sha_task_hash_as_task(sha_hash_task));
+	// 先注释掉
+	//doca_task_free(doca_sha_task_hash_as_task(sha_hash_task));
+
 	/* Decrement number of remaining tasks */
 	--resources->num_remaining_tasks;
+
 	/* Stop context once all tasks are completed */
 	if (resources->num_remaining_tasks == 0)
-		(void)doca_ctx_stop(resources->state.ctx);
+		resources->run_pe_progress = false;
+	// 先注释掉
+	// 	(void)doca_ctx_stop(resources->state.ctx);
 }
 
 /*
@@ -216,7 +221,7 @@ static void sha_state_changed_callback(const union doca_data user_data,
  * @src_buffer [in]: source data for the SHA task
  * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise.
  */
-doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size)
+doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size, int batch_num)
 {
 	struct sha_resources resources;
 	struct program_core_objects *state = &resources.state;
@@ -410,21 +415,17 @@ doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size)
 					doca_error_get_descr(result));
 		return result;
 	}
-
 	/* Include result in user data of task to be used in the callbacks */
 	task_user_data.ptr = &task_result;
 
-	struct timeval start_time, end_time;
-	gettimeofday(&start_time, NULL);
-	/* Submit SHA hash task */
 	for(int i=0; i<=batch_size-1; i++){
 		/* Allocate and construct SHA hash task */
 		result = doca_sha_task_hash_alloc_init(resources.sha_ctx,
-						SHA_SAMPLE_ALGORITHM,
-						src_doca_buf[i],
-						dst_doca_buf[i],
-						task_user_data,
-						&sha_hash_task[i]);
+					SHA_SAMPLE_ALGORITHM,
+					src_doca_buf[i],
+					dst_doca_buf[i],
+					task_user_data,
+					&sha_hash_task[i]);
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("Failed to allocate SHA hash task: %s", doca_error_get_descr(result));
 			return result;
@@ -437,56 +438,73 @@ doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size)
 			DOCA_LOG_ERR("Failed to get DOCA SHA hash task as DOCA task: %s", doca_error_get_descr(result));
 			return result;
 		}
+	}
 
-		result = doca_task_submit(task[i]);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to submit SHA hash task: %s", doca_error_get_descr(result));
-			return result;
+	struct timeval start_time, end_time;
+	gettimeofday(&start_time, NULL);
+	for(int k=0; k<=batch_num-1; k++){
+		for(int i=0; i<=batch_size-1; i++){
+			/* Submit SHA hash task */
+			result = doca_task_submit(task[i]);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to submit SHA hash task: %s", doca_error_get_descr(result));
+				return result;
+			}
 		}
+
+		while (resources.run_pe_progress) {
+			if (doca_pe_progress(state->pe) == 0)
+					//nanosleep(&ts, &ts);
+				;
+		}
+
+		for(int i=0; i<=batch_size-1; i++){
+			doca_buf_reset_data_len(dst_doca_buf[i]);
+		}
+
+		resources.num_remaining_tasks = batch_size;
+		resources.run_pe_progress = true;
+		
+		DOCA_LOG_INFO("batch %d finished", k);
 	}
 
-	/* Wait for all tasks to be completed and for the context to be stopped */
-	while (resources.run_pe_progress) {
-		if (doca_pe_progress(state->pe) == 0)
-			//nanosleep(&ts, &ts);
-			;
-	}
+	
 	gettimeofday(&end_time, NULL);
-	int used_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
-	DOCA_LOG_INFO("sha_create() used time: %d us", used_time_us);
+	long long used_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+	DOCA_LOG_INFO("sha_create() used time: %lld ms", used_time_us / 1000);
 
-	result = task_result;
+	// result = task_result;
 
-	/* Check result of task according to the result we update in the callbacks */
-	if (task_result != DOCA_SUCCESS) {
-		return result;
-	}
+	// /* Check result of task according to the result we update in the callbacks */
+	// if (task_result != DOCA_SUCCESS) {
+	// 	return result;
+	// }
 
-	/* Engine outputs hex format. For char format output, we need double the length */
-	sha_output = calloc(1, (min_dst_sha_buffer_size * 2) + 1);
-	if (sha_output == NULL) {
-		DOCA_LOG_ERR("Failed to allocate memory");
-		return DOCA_ERROR_NO_MEMORY;
-	}
+	// /* Engine outputs hex format. For char format output, we need double the length */
+	// sha_output = calloc(1, (min_dst_sha_buffer_size * 2) + 1);
+	// if (sha_output == NULL) {
+	// 	DOCA_LOG_ERR("Failed to allocate memory");
+	// 	return DOCA_ERROR_NO_MEMORY;
+	// }
 
-	for(int i=0; i<=batch_size-1; i++){
-		result = doca_buf_get_data_len(dst_doca_buf[i], &hash_length);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to get the data length of DOCA buffer: %s", doca_error_get_descr(result));
-			return result;
-		}
+	// for(int i=0; i<=batch_size-1; i++){
+	// 	result = doca_buf_get_data_len(dst_doca_buf[i], &hash_length);
+	// 	if (result != DOCA_SUCCESS) {
+	// 		DOCA_LOG_ERR("Failed to get the data length of DOCA buffer: %s", doca_error_get_descr(result));
+	// 		return result;
+	// 	}
 
-		result = doca_buf_get_data(dst_doca_buf[i], (void **)&dst_buffer_data);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to get the data of DOCA buffer: %s", doca_error_get_descr(result));
-			return result;
-		}
+	// 	result = doca_buf_get_data(dst_doca_buf[i], (void **)&dst_buffer_data);
+	// 	if (result != DOCA_SUCCESS) {
+	// 		DOCA_LOG_ERR("Failed to get the data of DOCA buffer: %s", doca_error_get_descr(result));
+	// 		return result;
+	// 	}
 
-		/* Convert the hex format to char format */
-		for (int j = 0; j < hash_length; j++)
-			snprintf(sha_output + (2 * j), 3, "%02x", dst_buffer_data[j]);
-		DOCA_LOG_INFO("SHA256 output is: %s", sha_output);
-	}
+	// 	/* Convert the hex format to char format */
+	// 	for (int j = 0; j < hash_length; j++)
+	// 		snprintf(sha_output + (2 * j), 3, "%02x", dst_buffer_data[j]);
+	// 	DOCA_LOG_INFO("SHA256 output is: %s", sha_output);
+	// }
 
 
 	// /* Clean and destroy all relevant objects */
