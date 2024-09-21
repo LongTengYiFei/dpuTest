@@ -1,8 +1,17 @@
-SRC = cyf_test_main.c cyf_test_sample.c ../../common.c ../../../applications/common/src/utils.c
+SRC = sha_create_main.c sha_create_sample.c /opt/mellanox/doca/samples/common.c /opt/mellanox/doca/applications/common/utils.c 
+SRC2 = x86_test.c
 INC = -I/opt/mellanox/doca/include \
 	  -I/opt/mellanox/doca/samples \
-	  -I/opt/mellanox/doca/applications/common/src 
-LIBS = -ldoca_sha -ldoca_common -ldoca_argp -L/opt/mellanox/doca/lib/aarch64-linux-gnu/
+	  -I/opt/mellanox/doca/applications/common/
+
+LIBS = -ldoca_sha -ldoca_common -ldoca_argp -lm \
+	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/
+
+test:
+	gcc $(SRC) $(INC) $(LIBS) -o doca_test -g
+
+test_x86:
+	gcc $(SRC2) -o doca_test_x86 -g -lssl -lcrypto 
 
 doca:
 	gcc $(SRC) $(INC) $(LIBS) -o doca_test
