@@ -10,8 +10,8 @@ int main(){
 	int batch_num = total_size / unit_size;
 
 	// random data gen
-	char* data = (char*)malloc(unit_size * batch_num);
-	for(int i=0; i<=total_size-1; i++){
+	char* data = (char*)malloc(unit_size);
+	for(int i=0; i<=unit_size-1; i++){
 		data[i] = 'b' + rand() % 26;
 	}
 
@@ -19,7 +19,7 @@ int main(){
     char sha_1_result[SHA_DIGEST_LENGTH];
     gettimeofday(&start, NULL);
     for(int i=0; i<=batch_num-1; i++){
-        SHA1(data + i*unit_size, unit_size, sha_1_result);
+        SHA1(data, unit_size, sha_1_result);
     }
     gettimeofday(&end, NULL);
     int cost_time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
@@ -28,7 +28,7 @@ int main(){
     char sha_256_result[SHA256_DIGEST_LENGTH];
     gettimeofday(&start, NULL);
     for(int i=0; i<=batch_num-1; i++){
-        SHA256(data + i*unit_size, unit_size, sha_256_result);
+        SHA256(data, unit_size, sha_256_result);
     }
     gettimeofday(&end, NULL);
     cost_time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
@@ -37,7 +37,7 @@ int main(){
     char sha_512_result[SHA512_DIGEST_LENGTH];
     gettimeofday(&start, NULL);
     for(int i=0; i<=batch_num-1; i++){
-        SHA512(data + i*unit_size, unit_size, sha_512_result);
+        SHA512(data, unit_size, sha_512_result);
     }
     gettimeofday(&end, NULL);
     cost_time_us = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
