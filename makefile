@@ -7,14 +7,11 @@ INC = -I/opt/mellanox/doca/include \
 LIBS = -ldoca_sha -ldoca_common -ldoca_argp -lm \
 	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/
 
-test:
-	gcc $(SRC) $(INC) $(LIBS) -o doca_test -g
+doca_sha_test:
+	gcc $(SRC) $(INC) $(LIBS) -o doca_sha_test -g
 
-test_x86:
-	gcc $(SRC2) -o doca_test_x86 -g -lssl -lcrypto 
-
-doca:
-	gcc $(SRC) $(INC) $(LIBS) -o doca_test
+cpu_sha_test:
+	gcc $(SRC2) -o cpu_sha_test -g -lssl -lcrypto -lm
 
 arm_sha:
 	gcc arm_cpu_sha_test.c -lcrypto -o arm_sha_test
@@ -23,6 +20,4 @@ arm_deflate:
 	gcc arm_cpu_deflate_test.c -lz -o arm_deflate_test
 
 clean:
-	rm arm_sha_test
-	rm arm_deflate_test
-	rm doca_test
+	rm doca_sha_test
