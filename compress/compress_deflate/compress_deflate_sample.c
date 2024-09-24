@@ -200,7 +200,7 @@ doca_error_t compress_deflate(struct compress_cfg *cfg, char *file_data, size_t 
 	gettimeofday(&start_time, NULL);
 
 	// 没搞懂为啥超过2GB就任务失败
-	for(int i=0; i<=2048-1; i++){
+	for(int i=0; i<=1024-1; i++){
 		// set src data
 		result = doca_buf_set_data(src_doca_buf, file_data + block_size*i, block_size);
 		if (result != DOCA_SUCCESS) {

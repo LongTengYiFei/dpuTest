@@ -1,11 +1,11 @@
 SRC = sha_create_main.c sha_create_sample.c /opt/mellanox/doca/samples/common.c /opt/mellanox/doca/applications/common/utils.c 
-SRC2 = x86_test.c
+SRC2 = cpu_sha.c
 INC = -I/opt/mellanox/doca/include \
 	  -I/opt/mellanox/doca/samples \
 	  -I/opt/mellanox/doca/applications/common/
 
 LIBS = -ldoca_sha -ldoca_common -ldoca_argp -lm \
-	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/
+	   -L/opt/mellanox/doca/lib/aarch64-linux-gnu/
 
 doca_sha_test:
 	gcc $(SRC) $(INC) $(LIBS) -o doca_sha_test -g

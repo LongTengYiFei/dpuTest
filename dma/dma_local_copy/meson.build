@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
+# Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES, ALL RIGHTS RESERVED.
 #
 # This software product is a proprietary product of NVIDIA CORPORATION &
 # AFFILIATES (the "Company") and all right, title, and interest in and to the
@@ -19,33 +19,39 @@ project('DOCA_SAMPLE', 'C', 'CPP',
 	meson_version: '>= 0.61.2'
 )
 
-SAMPLE_NAME = 'cyf_test'
+SAMPLE_NAME = 'dma_local_copy'
 
 # Comment this line to restore warnings of experimental DOCA features
 add_project_arguments('-D DOCA_ALLOW_EXPERIMENTAL_API', language: ['c', 'cpp'])
 
 sample_dependencies = []
 # Required for all DOCA programs
-sample_dependencies += dependency('doca')
+sample_dependencies += dependency('doca-common')
+# The DOCA library of the sample itself
+sample_dependencies += dependency('doca-dma')
+# Utility DOCA library for executables
+sample_dependencies += dependency('doca-argp')
 
 sample_srcs = [
 	# The sample itself
 	SAMPLE_NAME + '_sample.c',
 	# Main function for the sample's executable
 	SAMPLE_NAME + '_main.c',
+	# Common code for the DOCA library samples
+	'../dma_common.c',
 	# Common code for all DOCA samples
 	'../../common.c',
-	# Common code for all DOCA applications
-	'../../../applications/common/src/utils.c',
 ]
 
 sample_inc_dirs  = []
+# Common DOCA library logic
+sample_inc_dirs += include_directories('..')
 # Common DOCA logic (samples)
 sample_inc_dirs += include_directories('../..')
 # Common DOCA logic
 sample_inc_dirs += include_directories('../../..')
 # Common DOCA logic (applications)
-sample_inc_dirs += include_directories('../../../applications/common/src')
+sample_inc_dirs += include_directories('../../../applications/common/')
 
 executable('doca_' + SAMPLE_NAME, sample_srcs,
 	c_args : '-Wno-missing-braces',

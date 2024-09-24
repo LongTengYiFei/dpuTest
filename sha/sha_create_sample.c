@@ -34,7 +34,7 @@ DOCA_LOG_REGISTER(SHA_CREATE);
 
 #define SLEEP_IN_NANOS (10 * 1000)			 /* Sample the task every 10 microseconds  */
 #define LOG_NUM_SHA_TASKS (0)				 /* Log of SHA tasks number */
-#define SHA_SAMPLE_ALGORITHM (DOCA_SHA_ALGORITHM_SHA512) /* doca_sha_algorithm for the sample */
+#define SHA_SAMPLE_ALGORITHM (DOCA_SHA_ALGORITHM_SHA1) /* doca_sha_algorithm for the sample */
 #define SHA256_LEN 32
 struct sha_resources {
 	struct program_core_objects state; /* Core objects that manage our "state" */
@@ -110,22 +110,13 @@ static void sha_hash_completed_callback(struct doca_sha_task_hash *sha_hash_task
 	struct sha_resources *resources = (struct sha_resources *)ctx_user_data.ptr;
 	doca_error_t *result = (doca_error_t *)task_user_data.ptr;
 
-	/* Assign success to the result */
 	*result = DOCA_SUCCESS;
-	//DOCA_LOG_INFO("SHA hash task has completed successfully");
 
-	/* Free task */
-	// 先注释掉
-	//doca_task_free(doca_sha_task_hash_as_task(sha_hash_task));
-
-	/* Decrement number of remaining tasks */
 	--resources->num_remaining_tasks;
 
-	/* Stop context once all tasks are completed */
 	if (resources->num_remaining_tasks == 0)
 		resources->run_pe_progress = false;
-	// 先注释掉
-	// 	(void)doca_ctx_stop(resources->state.ctx);
+
 }
 
 /*
@@ -472,6 +463,8 @@ doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size, int bat
 	gettimeofday(&end_time, NULL);
 	long long used_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
 	DOCA_LOG_INFO("sha_create() used time: %lld ms", used_time_us / 1000);
+	DOCA_LOG_INFO("speed %.2f GB/s", 1.0 / ((float)(used_time_us) / 1000000));
+
 
 	// result = task_result;
 

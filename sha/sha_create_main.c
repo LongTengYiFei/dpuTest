@@ -98,10 +98,11 @@ int main(int argc, char **argv)
 	
 	// args
 	// doca 更新后，一个满队列只能是2MB数据
-	int batch_size = 128;
-	int unit_size = 16*1024;
+	int full_queue = (2*1024*1024);
+	int unit_size = 4*1024;
+	int batch_size = full_queue / unit_size;
 	int total_size = GB;
-	int batch_num = total_size / (batch_size * unit_size);
+	int batch_num = total_size / full_queue;
 
 	// random data gen
 	// 一个满队列的数据多算几遍，就不真的生成1GB数据了

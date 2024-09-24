@@ -41,7 +41,7 @@ int main(int argc, char **argv)
 {
 	doca_error_t result;
 	struct compress_cfg compress_cfg;
-	uint8_t *file_data = (uint8_t*)malloc(4*GB);;
+	uint8_t *file_data = (uint8_t*)malloc(GB);;
 	size_t file_size;
 	struct doca_log_backend *sdk_log;
 	int exit_status = EXIT_FAILURE;
@@ -98,7 +98,8 @@ int main(int argc, char **argv)
         exit(0);
     }
     fseek(fp, 0, SEEK_END);
-    unsigned long file_length = ftell(fp);
+    //unsigned long file_length = ftell(fp);
+	unsigned long file_length = GB;
     fseek(fp, 0, SEEK_SET);
     unsigned long n = fread(file_data, 1, file_length, fp);
     fclose(fp);

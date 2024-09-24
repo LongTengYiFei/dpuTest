@@ -18,7 +18,8 @@ int main(int argc, char const *argv[]){
 
     // get file length
     fseek(fp, 0, SEEK_END);
-    unsigned long file_length = ftell(fp);
+    //unsigned long file_length = ftell(fp);
+    unsigned long file_length = GB;
     fseek(fp, 0, SEEK_SET);
     u_int8_t* file_data = (u_int8_t*)malloc(file_length);
     fread(file_data, 1, file_length, fp);
@@ -46,6 +47,7 @@ int main(int argc, char const *argv[]){
     printf("level %d cost time ms %lld\n", level, cost_time_us / 1000);
     printf("src data len %ld\n", file_length);
     printf("comrpessed data len %ld\n", total_compressed_len);
+    return 0;
 
     cost_time_us = 0;
     total_compressed_len = 0;
