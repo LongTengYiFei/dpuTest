@@ -64,7 +64,7 @@ void free_cb(void *addr, size_t len, void *opaque)
  * @resources [in]: sha_resources struct
  * @return: DOCA_SUCCESS if the device supports SHA hash task and DOCA_ERROR otherwise.
  */
-static doca_error_t sha_cleanup(struct sha_resources *resources)
+doca_error_t sha_cleanup(struct sha_resources *resources)
 {
 	struct program_core_objects *state = &resources->state;
 	doca_error_t result = DOCA_SUCCESS, tmp_result;
@@ -103,7 +103,7 @@ static doca_error_t sha_cleanup(struct sha_resources *resources)
  * @task_user_data [in]: doca_data from the task
  * @ctx_user_data [in]: doca_data from the context
  */
-static void sha_hash_completed_callback(struct doca_sha_task_hash *sha_hash_task,
+void sha_hash_completed_callback(struct doca_sha_task_hash *sha_hash_task,
 					union doca_data task_user_data,
 					union doca_data ctx_user_data)
 {
@@ -126,7 +126,7 @@ static void sha_hash_completed_callback(struct doca_sha_task_hash *sha_hash_task
  * @task_user_data [in]: doca_data from the task
  * @ctx_user_data [in]: doca_data from the context
  */
-static void sha_hash_error_callback(struct doca_sha_task_hash *sha_hash_task,
+void sha_hash_error_callback(struct doca_sha_task_hash *sha_hash_task,
 				    union doca_data task_user_data,
 				    union doca_data ctx_user_data)
 {
@@ -153,7 +153,7 @@ static void sha_hash_error_callback(struct doca_sha_task_hash *sha_hash_task,
  * @devinfo [in]: The DOCA device information
  * @return: DOCA_SUCCESS if the device supports SHA hash task and DOCA_ERROR otherwise.
  */
-static doca_error_t sha_hash_is_supported(struct doca_devinfo *devinfo)
+doca_error_t sha_hash_is_supported(struct doca_devinfo *devinfo)
 {
 	return doca_sha_cap_task_hash_get_supported(devinfo, SHA_SAMPLE_ALGORITHM);
 }
@@ -166,7 +166,7 @@ static doca_error_t sha_hash_is_supported(struct doca_devinfo *devinfo)
  * @prev_state [in]: Previous context state
  * @next_state [in]: Next context state (context is already in this state when the callback is called)
  */
-static void sha_state_changed_callback(const union doca_data user_data,
+void sha_state_changed_callback(const union doca_data user_data,
 				       struct doca_ctx *ctx,
 				       enum doca_ctx_states prev_state,
 				       enum doca_ctx_states next_state)
