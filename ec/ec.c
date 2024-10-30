@@ -32,6 +32,11 @@
 #include <utils.h>
 
 #include "common.h"
+#include "./Jerasure/include/jerasure.h"
+#include "./Jerasure/include/reed_sol.h"
+
+#include <sys/time.h>
+ #include <fcntl.h>
 
 DOCA_LOG_REGISTER(EC_RECOVER);
 
@@ -352,46 +357,47 @@ static void ec_create_completed_callback(struct doca_ec_task_create *create_task
 
 	*task_data->task_status = DOCA_SUCCESS;
 
-	/* Write the result to output file */
-	result = doca_buf_get_data(task_data->rdnc_blocks, (void **)&resp_data);
-	CB_ASSERT(result == DOCA_SUCCESS,
-		  result,
-		  task_data->cb_result,
-		  "Unable to retrieve data pointer from redundancy data blocks buffer");
+	// /* Write the result to output file */
+	// result = doca_buf_get_data(task_data->rdnc_blocks, (void **)&resp_data);
+	// CB_ASSERT(result == DOCA_SUCCESS,
+	// 	  result,
+	// 	  task_data->cb_result,
+	// 	  "Unable to retrieve data pointer from redundancy data blocks buffer");
 
-	for (i = 0; i < task_data->rdnc_block_count; i++) {
-		ret = snprintf(full_path,
-			       sizeof(full_path),
-			       "%s/%s%ld",
-			       task_data->output_dir_path,
-			       RDNC_BLOCK_FILE_NAME,
-			       i);
-		CB_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-			  DOCA_ERROR_IO_FAILED,
-			  task_data->cb_result,
-			  "Path exceeded max path len");
-		state->block_file = fopen(full_path, "wr");
-		CB_ASSERT(state->block_file != NULL,
-			  DOCA_ERROR_IO_FAILED,
-			  task_data->cb_result,
-			  "Unable to open output file: %s",
-			  full_path);
-		ret = fwrite(resp_data + i * task_data->block_size, task_data->block_size, 1, state->block_file);
-		CB_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, task_data->cb_result, "Failed to write to file");
-		fclose(state->block_file);
-		state->block_file = NULL;
-	}
+	// for (i = 0; i < task_data->rdnc_block_count; i++) {
+	// 	ret = snprintf(full_path,
+	// 		       sizeof(full_path),
+	// 		       "%s/%s%ld",
+	// 		       task_data->output_dir_path,
+	// 		       RDNC_BLOCK_FILE_NAME,
+	// 		       i);
+	// 	CB_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
+	// 		  DOCA_ERROR_IO_FAILED,
+	// 		  task_data->cb_result,
+	// 		  "Path exceeded max path len");
+	// 	state->block_file = fopen(full_path, "wr");
+	// 	CB_ASSERT(state->block_file != NULL,
+	// 		  DOCA_ERROR_IO_FAILED,
+	// 		  task_data->cb_result,
+	// 		  "Unable to open output file: %s",
+	// 		  full_path);
+	// 	ret = fwrite(resp_data + i * task_data->block_size, task_data->block_size, 1, state->block_file);
+	// 	CB_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, task_data->cb_result, "Failed to write to file");
+	// 	fclose(state->block_file);
+	// 	state->block_file = NULL;
+	// }
 
-	DOCA_LOG_INFO("File was encoded successfully and saved in: %s", task_data->output_dir_path);
+	//DOCA_LOG_INFO("File was encoded successfully and saved in: %s", task_data->output_dir_path);
 
 	*task_data->cb_result = DOCA_SUCCESS;
 
 free_task:
 	/* Free task */
-	doca_task_free(doca_ec_task_create_as_task(create_task));
+	// doca_task_free(doca_ec_task_create_as_task(create_task));
 
-	/* Stop context once task is completed */
-	(void)doca_ctx_stop(state->core_state.ctx);
+	// /* Stop context once task is completed */
+	// (void)doca_ctx_stop(state->core_state.ctx);
+	state->run_pe_progress = false;
 }
 
 /*
@@ -424,10 +430,12 @@ doca_error_t ec_encode(const char *pci_addr,
 	struct ec_sample_objects state_object = {0};
 	struct ec_sample_objects *state = &state_object;
 	char full_path[MAX_PATH_NAME];
+
 	struct timespec ts = {
 		.tv_sec = 0,
 		.tv_nsec = SLEEP_IN_NANOS,
 	};
+
 	doca_error_t task_status = DOCA_SUCCESS;
 	doca_error_t callback_result = DOCA_SUCCESS;
 	struct doca_task *doca_task;
@@ -453,39 +461,39 @@ doca_error_t ec_encode(const char *pci_addr,
 	state->dst_buffer = malloc(dst_size);
 	SAMPLE_ASSERT(state->dst_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate dst_buffer string");
 
-	for (i = 0; i < data_block_count; i++) {
-		ret = snprintf(full_path, sizeof(full_path), "%s/%s%ld", output_dir_path, DATA_BLOCK_FILE_NAME, i);
-		SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-			      DOCA_ERROR_IO_FAILED,
-			      state,
-			      "Path exceeded max path len");
-		state->block_file = fopen(full_path, "wr");
-		SAMPLE_ASSERT(state->block_file != NULL,
-			      DOCA_ERROR_IO_FAILED,
-			      state,
-			      "Unable to open output file: %s",
-			      full_path);
-		ret = fwrite(state->src_buffer + i * block_size, block_size, 1, state->block_file);
-		SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
-		fclose(state->block_file);
-		state->block_file = NULL;
-	}
+	// for (i = 0; i < data_block_count; i++) {
+	// 	ret = snprintf(full_path, sizeof(full_path), "%s/%s%ld", output_dir_path, DATA_BLOCK_FILE_NAME, i);
+	// 	SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
+	// 		      DOCA_ERROR_IO_FAILED,
+	// 		      state,
+	// 		      "Path exceeded max path len");
+	// 	state->block_file = fopen(full_path, "wr");
+	// 	SAMPLE_ASSERT(state->block_file != NULL,
+	// 		      DOCA_ERROR_IO_FAILED,
+	// 		      state,
+	// 		      "Unable to open output file: %s",
+	// 		      full_path);
+	// 	ret = fwrite(state->src_buffer + i * block_size, block_size, 1, state->block_file);
+	// 	SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
+	// 	fclose(state->block_file);
+	// 	state->block_file = NULL;
+	// }
 
-	ret = snprintf(full_path, sizeof(full_path), "%s/%s", output_dir_path, DATA_INFO_FILE_NAME);
-	SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-		      DOCA_ERROR_IO_FAILED,
-		      state,
-		      "Path exceeded max path len");
-	state->block_file = fopen(full_path, "wr");
-	SAMPLE_ASSERT(state->block_file != NULL,
-		      DOCA_ERROR_IO_FAILED,
-		      state,
-		      "Unable to open output file: %s",
-		      full_path);
-	ret = fprintf(state->block_file, "%ld %.*s", file_size, (int)strlen(file_path), file_path);
-	SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
-	fclose(state->block_file);
-	state->block_file = NULL;
+	// ret = snprintf(full_path, sizeof(full_path), "%s/%s", output_dir_path, DATA_INFO_FILE_NAME);
+	// SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
+	// 	      DOCA_ERROR_IO_FAILED,
+	// 	      state,
+	// 	      "Path exceeded max path len");
+	// state->block_file = fopen(full_path, "wr");
+	// SAMPLE_ASSERT(state->block_file != NULL,
+	// 	      DOCA_ERROR_IO_FAILED,
+	// 	      state,
+	// 	      "Unable to open output file: %s",
+	// 	      full_path);
+	// ret = fprintf(state->block_file, "%ld %.*s", file_size, (int)strlen(file_path), file_path);
+	// SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
+	// fclose(state->block_file);
+	// state->block_file = NULL;
 
 	result = ec_core_init(state,
 			      pci_addr,
@@ -502,13 +510,25 @@ doca_error_t ec_encode(const char *pci_addr,
 					      ec_create_completed_callback,
 					      ec_create_error_callback,
 					      NUM_EC_TASKS);
+	// result = doca_ec_task_galois_mul_set_conf(state->ec,
+	// 				      ec_create_completed_callback,
+	// 				      ec_create_error_callback,
+	// 				      NUM_EC_TASKS);
+			
 	ASSERT_DOCA_ERR(result, state, "Unable to set configuration for create tasks");
 
 	/* Start the task */
 	result = doca_ctx_start(state->core_state.ctx);
 	ASSERT_DOCA_ERR(result, state, "Unable to start context");
 
+	// uint8_t *matrix_RSvandermode = reed_sol_vandermonde_coding_matrix(data_block_count, rdnc_block_count, 8);
+	// uint8_t *matrix_RSvandermode = reed_sol_extended_vandermonde_matrix(data_block_count, rdnc_block_count, 8);
 	/* Create a matrix for the task */
+	// result = doca_ec_matrix_create_from_raw(state->ec,
+	// 			       matrix_RSvandermode,
+	// 			       data_block_count,
+	// 			       rdnc_block_count,
+	// 			       &state->encoding_matrix);
 	result = doca_ec_matrix_create(state->ec,
 				       matrix_type,
 				       data_block_count,
@@ -545,6 +565,8 @@ doca_error_t ec_encode(const char *pci_addr,
 	doca_task = doca_ec_task_create_as_task(task);
 	SAMPLE_ASSERT(doca_task != NULL, DOCA_ERROR_UNEXPECTED, state, "Unable to retrieve task as doca_task");
 
+	struct timeval start_time, end_time;
+	gettimeofday(&start_time, 0);
 	/* Enqueue ec create task */
 	result = doca_task_submit(doca_task);
 	ASSERT_DOCA_ERR(result, state, "Unable to submit task");
@@ -554,19 +576,36 @@ doca_error_t ec_encode(const char *pci_addr,
 	/* Wait for create task completion and for context to return to idle */
 	while (state->run_pe_progress) {
 		if (doca_pe_progress(state->core_state.pe) == 0)
-			nanosleep(&ts, &ts);
+			//nanosleep(&ts, &ts);
+			;
+	}
+	gettimeofday(&end_time, 0);
+	int time_cost_encoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
+	printf("encoding time %d us\n", time_cost_encoding);
+
+	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
+
+	// data
+	printf("doca data\n");
+	for(int i=0; i<=3; i++){
+		for(int j=0; j<=10; j++){
+			printf("%d ", state->src_buffer[j+i*block_size]);
+		}
+		printf("\n");
+	}
+	// parity
+	printf("doca parity\n");
+	for(int i=0; i<=1; i++){
+		for(int j=0; j<=10; j++){
+			printf("%d ", state->dst_buffer[j+i*block_size]);
+		}
+		printf("\n");
 	}
 
-	/* Check result of task and callback */
-	ASSERT_DOCA_ERR(task_status, state, "EC create task failed");
-
-	if (callback_result == DOCA_SUCCESS)
-		DOCA_LOG_INFO("Success, redundancy blocks were created");
-	else
-		DOCA_LOG_ERR("Sample failed: %s", doca_error_get_descr(callback_result));
-
-	/* Clean and destroy all relevant objects */
-	ec_cleanup(state);
+	// // write parity block
+	// int fd = open("./testParity", O_RDWR);
+	// write(fd, state->dst_buffer, block_size * 2);
 
 	return callback_result;
 }
@@ -627,68 +666,8 @@ static void ec_recover_completed_callback(struct doca_ec_task_recover *recover_t
 	struct ec_sample_objects *state = ctx_user_data.ptr;
 
 	*task_data->task_status = DOCA_SUCCESS;
-
-	/* write the result to output file */
-	result = doca_buf_get_data(task_data->recovered_data_blocks, (void **)&resp_data);
-	CB_ASSERT(result == DOCA_SUCCESS,
-		  result,
-		  task_data->cb_result,
-		  "Unable to retrieve data pointer from redundancy data blocks buffer");
-
-	for (i = 0; i < task_data->n_missing; i++) {
-		ret = snprintf(full_path,
-			       sizeof(full_path),
-			       "%s/%s%d",
-			       task_data->dir_path,
-			       DATA_BLOCK_FILE_NAME,
-			       state->missing_indices[i]);
-		CB_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-			  DOCA_ERROR_IO_FAILED,
-			  task_data->cb_result,
-			  "Path exceeded max path len");
-		state->block_file = fopen(full_path, "wr");
-		CB_ASSERT(state->block_file != NULL,
-			  DOCA_ERROR_IO_FAILED,
-			  task_data->cb_result,
-			  "Unable to open output file: %s",
-			  full_path);
-		ret = fwrite(resp_data + i * task_data->block_size, task_data->block_size, 1, state->block_file);
-		CB_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, task_data->cb_result, "Failed to write to file");
-		fclose(state->block_file);
-		state->block_file = NULL;
-	}
-
-	remaining_file_size = task_data->file_size;
-	for (i = 0; i < task_data->data_block_count; i++) {
-		ret = snprintf(full_path, sizeof(full_path), "%s/%s%ld", task_data->dir_path, DATA_BLOCK_FILE_NAME, i);
-		CB_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-			  DOCA_ERROR_IO_FAILED,
-			  task_data->cb_result,
-			  "Path exceeded max path len");
-		result = read_file(full_path, &state->block_file_data, &block_file_size);
-		CB_ASSERT(result == DOCA_SUCCESS, result, task_data->cb_result, "Unable to open data file");
-		if (remaining_file_size < block_file_size)
-			block_file_size = remaining_file_size;
-		ret = fwrite(state->block_file_data, block_file_size, 1, state->out_file);
-		CB_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, task_data->cb_result, "Failed to write to file");
-		remaining_file_size -= block_file_size;
-		free(state->block_file_data);
-		state->block_file_data = NULL;
-
-		if (remaining_file_size == 0)
-			break;
-	}
-
-	DOCA_LOG_INFO("File was decoded successfully and saved in: %s", task_data->output_file_path);
-
 	*task_data->cb_result = DOCA_SUCCESS;
-
-free_task:
-	/* Free task */
-	doca_task_free(doca_ec_task_recover_as_task(recover_task));
-
-	/* Stop context once task is completed */
-	(void)doca_ctx_stop(state->core_state.ctx);
+	state->run_pe_progress = false;
 }
 
 /*
@@ -715,14 +694,12 @@ doca_error_t ec_decode(const char *pci_addr,
 	size_t i;
 	uint64_t max_block_size;
 	size_t block_file_size;
-	uint64_t block_size = 0;
+
 	uint32_t str_len;
-	uint64_t src_size = -1;
-	uint64_t src_size_cur = 0;
-	uint64_t dst_size;
+
 	struct ec_sample_objects state_object = {0};
 	struct ec_sample_objects *state = &state_object;
-	size_t n_missing = 0;
+	
 	char *end;
 	int64_t file_size;
 	char output_file_path[MAX_PATH_NAME];
@@ -738,107 +715,30 @@ doca_error_t ec_decode(const char *pci_addr,
 	struct recover_task_data task_data;
 	union doca_data user_data;
 
-	ret = snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, DATA_INFO_FILE_NAME);
-	SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-		      DOCA_ERROR_IO_FAILED,
-		      state,
-		      "Path exceeded max path len");
-	result = read_file(full_path, &state->block_file_data, &block_file_size);
-	ASSERT_DOCA_ERR(result, state, "Unable to open data file");
-	SAMPLE_ASSERT(block_file_size > 0, DOCA_ERROR_INVALID_VALUE, state, "File data info size is empty");
-	SAMPLE_ASSERT(strnlen(state->block_file_data, block_file_size) < MAX_DATA_SIZE,
-		      DOCA_ERROR_INVALID_VALUE,
-		      state,
-		      "File data info may be nonfinite");
-	file_size = strtol(state->block_file_data, &end, 10);
-	SAMPLE_ASSERT(file_size > 0, DOCA_ERROR_INVALID_VALUE, state, "File size from data info file none positive");
-	SAMPLE_ASSERT(*end != '\0', DOCA_ERROR_INVALID_VALUE, state, "Data info file not containing path");
+	#define MB (1024*1024)
+	uint64_t block_size = MB;
+	uint64_t src_size = block_size * 4;
+	size_t n_missing = 2;
+	uint64_t dst_size = block_size * n_missing;
+	state->missing_indices = malloc(2*sizeof(uint32_t));
+	// 0 1 2 3
+	// 4 5
+	state->missing_indices[0] = 0;
+	state->missing_indices[1] = 4;
 
-	if (user_output_file_path != NULL) {
-		SAMPLE_ASSERT(strnlen(user_output_file_path, MAX_PATH_NAME) < MAX_PATH_NAME,
-			      DOCA_ERROR_INVALID_VALUE,
-			      state,
-			      "Path exceeded max path len");
-		strcpy(output_file_path, user_output_file_path);
-	} else {
-		str_len = block_file_size - (end + 1 - state->block_file_data);
-		SAMPLE_ASSERT(strnlen(end + 1, str_len) < USER_MAX_PATH_NAME - sizeof(RECOVERED_FILE_NAME),
-			      DOCA_ERROR_INVALID_VALUE,
-			      state,
-			      "File data info contain file path bigger then max size");
-		ret = snprintf(output_file_path,
-			       sizeof(output_file_path),
-			       "%.*s%s",
-			       str_len,
-			       end + 1,
-			       RECOVERED_FILE_NAME);
-		SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(output_file_path),
-			      DOCA_ERROR_IO_FAILED,
-			      state,
-			      "Path exceeded max path len");
-	}
+	// 准备源数据
+	state->src_buffer = calloc(src_size, 1);
+	// read data 123
+	int fd_data = open("./testInput", O_RDONLY);
+	lseek(fd_data, 1*block_size, SEEK_SET); // 假装数据块0丢了
+	read(fd_data, state->src_buffer, 3*block_size);
+	// read parity 1
+	int fd_parity = open("./testParity", O_RDONLY);
+	lseek(fd_parity, block_size, SEEK_SET); // 假装校验块0丢了
+	read(fd_parity, state->src_buffer + 3*block_size, block_size);
 
-	free(state->block_file_data);
-	state->block_file_data = NULL;
-
-	state->out_file = fopen(output_file_path, "wr");
-	SAMPLE_ASSERT(state->out_file != NULL,
-		      DOCA_ERROR_IO_FAILED,
-		      state,
-		      "Unable to open output file: %s",
-		      output_file_path);
-
-	state->missing_indices = calloc(data_block_count + rdnc_block_count, sizeof(uint32_t));
-	SAMPLE_ASSERT(state->missing_indices != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate missing_indices");
-
-	for (i = 0; i < data_block_count + rdnc_block_count; i++) {
-		char *file_name = i < data_block_count ? DATA_BLOCK_FILE_NAME : RDNC_BLOCK_FILE_NAME;
-		size_t index = i < data_block_count ? i : i - data_block_count;
-
-		ret = snprintf(full_path, sizeof(full_path), "%s/%s%ld", dir_path, file_name, index);
-		SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-			      DOCA_ERROR_IO_FAILED,
-			      state,
-			      "Path exceeded max path len");
-		result = read_file(full_path, &state->block_file_data, &block_file_size);
-		if (result == DOCA_SUCCESS && block_file_size > 0 && block_size == 0) {
-			block_size = block_file_size;
-			SAMPLE_ASSERT(block_size % 64 == 0,
-				      DOCA_ERROR_INVALID_VALUE,
-				      state,
-				      "Block size is not 64 byte aligned");
-			src_size = (uint64_t)block_size * data_block_count;
-			state->src_buffer = malloc(src_size);
-			SAMPLE_ASSERT(state->src_buffer != NULL,
-				      DOCA_ERROR_NO_MEMORY,
-				      state,
-				      "Unable to allocate src_buffer string");
-		}
-		if (result == DOCA_SUCCESS) {
-			SAMPLE_ASSERT((uint64_t)block_file_size == block_size,
-				      DOCA_ERROR_INVALID_VALUE,
-				      state,
-				      "Blocks are not same size");
-			DOCA_LOG_INFO("Copy: %s", full_path);
-			memcpy(state->src_buffer + src_size_cur, state->block_file_data, block_size);
-			src_size_cur += block_size;
-			free(state->block_file_data);
-			state->block_file_data = NULL;
-		} else
-			state->missing_indices[n_missing++] = i;
-		if (src_size_cur == src_size)
-			break;
-	}
-
-	SAMPLE_ASSERT(src_size_cur == src_size, DOCA_ERROR_INVALID_VALUE, state, "Not enough data for recover");
-	SAMPLE_ASSERT(n_missing > 0,
-		      DOCA_ERROR_INVALID_VALUE,
-		      state,
-		      "Nothing to decode, all original data block are in place");
-	dst_size = block_size * n_missing;
-
+	// 分配目标数据空间
 	state->dst_buffer = malloc(dst_size);
-	SAMPLE_ASSERT(state->dst_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate dst_buffer string");
 
 	result = ec_core_init(state,
 			      pci_addr,
@@ -849,14 +749,6 @@ doca_error_t ec_decode(const char *pci_addr,
 			      &max_block_size);
 	if (result != DOCA_SUCCESS)
 		return result;
-
-	SAMPLE_ASSERT(
-		block_size <= max_block_size,
-		DOCA_ERROR_INVALID_VALUE,
-		state,
-		"Block size (%lu) exceeds the maximum size supported (%lu). Try to increase the number of blocks or use a smaller file as input",
-		block_size,
-		max_block_size);
 
 	/* Set task configuration */
 	result = doca_ec_task_recover_set_conf(state->ec,
@@ -920,18 +812,24 @@ doca_error_t ec_decode(const char *pci_addr,
 			nanosleep(&ts, &ts);
 	}
 
-	/* Check result of task and the callback */
-	ASSERT_DOCA_ERR(task_status, state, "EC recover task failed");
+	// 检查恢复的数据
+	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
+	int len;
+	doca_buf_get_data_len(state->dst_doca_buf, &len);
+	printf("len %d\n", len);
 
-	if (callback_result == DOCA_SUCCESS)
-		DOCA_LOG_INFO("Success, data was recovered");
-	else
-		DOCA_LOG_ERR("Sample failed: %s", doca_error_get_descr(callback_result));
+	// data block 0
+	for(int i=0; i<=10; i++){
+		printf("%d ", state->dst_buffer[i]);
+	}
+	printf("\n");
 
-	/* The task was already freed and the context was stopped in the callbacks */
-
-	/* Clean and destroy all relevant objects */
-	ec_cleanup(state);
+	// parity block 0
+	for(int i=0; i<=10; i++){
+		printf("%d ", state->dst_buffer[i + block_size]);
+	}
+	printf("\n");
+	printf("recover over\n");
 
 	return callback_result;
 }
@@ -1005,16 +903,8 @@ doca_error_t ec_recover(const char *pci_addr,
 		output_file_path = output_path;
 	}
 
-	if (do_both || input_path_is_file)
-		result = ec_encode(pci_addr, input_path, matrix_type, output_path, data_block_count, rdnc_block_count);
-	if (result != DOCA_SUCCESS)
-		return result;
-	if (do_both)
-		result = ec_delete_data(output_path, missing_indices, n_missing);
-	if (result != DOCA_SUCCESS)
-		return result;
-	if (do_both || !input_path_is_file)
-		result =
-			ec_decode(pci_addr, matrix_type, output_file_path, dir_path, data_block_count, rdnc_block_count);
+	result = ec_encode(pci_addr, input_path, matrix_type, output_path, data_block_count, rdnc_block_count);
+	// result = ec_delete_data(output_path, missing_indices, n_missing);
+	//result = ec_decode(pci_addr, matrix_type, output_file_path, dir_path, data_block_count, rdnc_block_count);
 	return result;
 }

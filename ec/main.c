@@ -35,7 +35,7 @@ struct ec_cfg {
 	char output_path[MAX_PATH_NAME]; /* output might be a file or a folder - depends on the input and do_both */
 	char pci_address[DOCA_DEVINFO_PCI_ADDR_SIZE]; /* device PCI address */
 	bool do_both;				      /* to do full process - encoding & decoding */
-	enum doca_ec_matrix_type matrix;	      /* ec matrix type */
+	enum doca_ec_matrix_type matrix_type;	      /* ec matrix type */
 	uint32_t data_block_count;		      /* data block count */
 	uint32_t rdnc_block_count;		      /* redundancy block count */
 	size_t n_delete_block;			      /* number of deleted block indices */
@@ -157,9 +157,9 @@ static doca_error_t matrix_callback(void *param, void *config)
 	char *matrix = (char *)param;
 
 	if (strcasecmp(matrix, "cauchy") == 0)
-		ec_cfg->matrix = DOCA_EC_MATRIX_TYPE_CAUCHY;
+		ec_cfg->matrix_type = DOCA_EC_MATRIX_TYPE_CAUCHY;
 	else if (strcasecmp(matrix, "vandermonde") == 0)
-		ec_cfg->matrix = DOCA_EC_MATRIX_TYPE_VANDERMONDE;
+		ec_cfg->matrix_type = DOCA_EC_MATRIX_TYPE_VANDERMONDE;
 	else {
 		DOCA_LOG_ERR("Illegal mode = [%s]", matrix);
 		return DOCA_ERROR_INVALID_VALUE;
@@ -416,12 +416,12 @@ int main(int argc, char **argv)
 		DOCA_LOG_ERR("Self path is too long, max %d", USER_MAX_PATH_NAME);
 		goto sample_exit;
 	}
-	strcpy(ec_cfg.pci_address, "03:00.0");
-	strncpy(ec_cfg.input_path, argv[0], USER_MAX_PATH_NAME);
-	strcpy(ec_cfg.output_path, "/tmp");
+	strcpy(ec_cfg.pci_address, "4b:00.0");
+	strncpy(ec_cfg.input_path, "./testInput", USER_MAX_PATH_NAME);
+	strcpy(ec_cfg.output_path, "./testOutput");
 	ec_cfg.do_both = false; /* do both encoding & decoding (and delete data block between them) */
-	ec_cfg.matrix = DOCA_EC_MATRIX_TYPE_CAUCHY;
-	ec_cfg.data_block_count = 2; /* data block count */
+	ec_cfg.matrix_type = DOCA_EC_MATRIX_TYPE_VANDERMONDE;
+	ec_cfg.data_block_count = 4; /* data block count */
 	ec_cfg.rdnc_block_count = 2; /* redundancy block count */
 	ec_cfg.delete_block_indices[0] = 0;
 	ec_cfg.n_delete_block = 1;
@@ -448,7 +448,7 @@ int main(int argc, char **argv)
 			    ec_cfg.input_path,
 			    ec_cfg.output_path,
 			    ec_cfg.do_both,
-			    ec_cfg.matrix,
+			    ec_cfg.matrix_type,
 			    ec_cfg.data_block_count,
 			    ec_cfg.rdnc_block_count,
 			    ec_cfg.delete_block_indices,
