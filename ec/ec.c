@@ -34,6 +34,7 @@
 #include "common.h"
 #include "./Jerasure/include/jerasure.h"
 #include "./Jerasure/include/reed_sol.h"
+#include "./Jerasure/include/cauchy.h"
 
 #include <sys/time.h>
  #include <fcntl.h>
@@ -443,57 +444,20 @@ doca_error_t ec_encode(const char *pci_addr,
 	struct create_task_data task_data;
 	union doca_data user_data;
 
-	result = read_file(file_path, &state->file_data, &file_size);
-	ASSERT_DOCA_ERR(result, state, "Can't read input file");
-
-	block_size = file_size / data_block_count;
-	if (block_size * data_block_count != file_size)
-		block_size++;
-	if (block_size % 64 != 0)
-		block_size += 64 - (block_size % 64);
+	block_size = 1024*1024;
+	// if (block_size * data_block_count != file_size)
+	// 	block_size++;
+	// if (block_size % 64 != 0)
+	// 	block_size += 64 - (block_size % 64);
 	src_size = (uint64_t)block_size * data_block_count;
 	dst_size = (uint64_t)block_size * rdnc_block_count;
 
-	state->src_buffer = calloc(src_size, 1);
-	SAMPLE_ASSERT(state->src_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate src_buffer string");
-	memcpy(state->src_buffer, state->file_data, file_size);
+	state->src_buffer = (char*)calloc(src_size, 1);
+	int fd_data = open("./testInput", O_RDONLY);
+	read(fd_data, state->src_buffer, src_size);
 
-	state->dst_buffer = malloc(dst_size);
+	state->dst_buffer = (char*)malloc(dst_size);
 	SAMPLE_ASSERT(state->dst_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate dst_buffer string");
-
-	// for (i = 0; i < data_block_count; i++) {
-	// 	ret = snprintf(full_path, sizeof(full_path), "%s/%s%ld", output_dir_path, DATA_BLOCK_FILE_NAME, i);
-	// 	SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-	// 		      DOCA_ERROR_IO_FAILED,
-	// 		      state,
-	// 		      "Path exceeded max path len");
-	// 	state->block_file = fopen(full_path, "wr");
-	// 	SAMPLE_ASSERT(state->block_file != NULL,
-	// 		      DOCA_ERROR_IO_FAILED,
-	// 		      state,
-	// 		      "Unable to open output file: %s",
-	// 		      full_path);
-	// 	ret = fwrite(state->src_buffer + i * block_size, block_size, 1, state->block_file);
-	// 	SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
-	// 	fclose(state->block_file);
-	// 	state->block_file = NULL;
-	// }
-
-	// ret = snprintf(full_path, sizeof(full_path), "%s/%s", output_dir_path, DATA_INFO_FILE_NAME);
-	// SAMPLE_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-	// 	      DOCA_ERROR_IO_FAILED,
-	// 	      state,
-	// 	      "Path exceeded max path len");
-	// state->block_file = fopen(full_path, "wr");
-	// SAMPLE_ASSERT(state->block_file != NULL,
-	// 	      DOCA_ERROR_IO_FAILED,
-	// 	      state,
-	// 	      "Unable to open output file: %s",
-	// 	      full_path);
-	// ret = fprintf(state->block_file, "%ld %.*s", file_size, (int)strlen(file_path), file_path);
-	// SAMPLE_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, state, "Failed to write to file");
-	// fclose(state->block_file);
-	// state->block_file = NULL;
 
 	result = ec_core_init(state,
 			      pci_addr,
@@ -510,27 +474,23 @@ doca_error_t ec_encode(const char *pci_addr,
 					      ec_create_completed_callback,
 					      ec_create_error_callback,
 					      NUM_EC_TASKS);
-	// result = doca_ec_task_galois_mul_set_conf(state->ec,
-	// 				      ec_create_completed_callback,
-	// 				      ec_create_error_callback,
-	// 				      NUM_EC_TASKS);
-			
+
 	ASSERT_DOCA_ERR(result, state, "Unable to set configuration for create tasks");
 
 	/* Start the task */
 	result = doca_ctx_start(state->core_state.ctx);
 	ASSERT_DOCA_ERR(result, state, "Unable to start context");
 
-	// uint8_t *matrix_RSvandermode = reed_sol_vandermonde_coding_matrix(data_block_count, rdnc_block_count, 8);
-	// uint8_t *matrix_RSvandermode = reed_sol_extended_vandermonde_matrix(data_block_count, rdnc_block_count, 8);
-	/* Create a matrix for the task */
-	// result = doca_ec_matrix_create_from_raw(state->ec,
-	// 			       matrix_RSvandermode,
-	// 			       data_block_count,
-	// 			       rdnc_block_count,
-	// 			       &state->encoding_matrix);
-	result = doca_ec_matrix_create(state->ec,
-				       matrix_type,
+	// jerasure给的矩阵不能直接用，得转置一下，而且还得是uint8；
+	int* tmp = reed_sol_vandermonde_coding_matrix(data_block_count,rdnc_block_count,8);
+	uint8_t* vandermonde_matrix = malloc(sizeof(uint8_t)*data_block_count*rdnc_block_count);
+	for(int i=0; i<=rdnc_block_count-1; i++){
+		for(int j=0; j<=data_block_count-1; j++){
+			vandermonde_matrix[i +j*rdnc_block_count] = tmp[i*data_block_count +j];
+		}
+	}
+	result = doca_ec_matrix_create_from_raw(state->ec,
+				       vandermonde_matrix,
 				       data_block_count,
 				       rdnc_block_count,
 				       &state->encoding_matrix);
@@ -603,7 +563,7 @@ doca_error_t ec_encode(const char *pci_addr,
 		printf("\n");
 	}
 
-	// // write parity block
+	// write parity block
 	// int fd = open("./testParity", O_RDWR);
 	// write(fd, state->dst_buffer, block_size * 2);
 
@@ -719,8 +679,8 @@ doca_error_t ec_decode(const char *pci_addr,
 	uint64_t block_size = MB;
 	uint64_t src_size = block_size * 4;
 	size_t n_missing = 2;
-	uint64_t dst_size = block_size * n_missing;
-	state->missing_indices = malloc(2*sizeof(uint32_t));
+	uint64_t dst_size = block_size*2;
+	state->missing_indices = (uint32_t*)malloc((4+2)*sizeof(uint32_t));
 	// 0 1 2 3
 	// 4 5
 	state->missing_indices[0] = 0;
@@ -735,7 +695,7 @@ doca_error_t ec_decode(const char *pci_addr,
 	// read parity 1
 	int fd_parity = open("./testParity", O_RDONLY);
 	lseek(fd_parity, block_size, SEEK_SET); // 假装校验块0丢了
-	read(fd_parity, state->src_buffer + 3*block_size, block_size);
+	read(fd_parity, state->src_buffer + 3*block_size, 1*block_size);
 
 	// 分配目标数据空间
 	state->dst_buffer = malloc(dst_size);
@@ -823,12 +783,12 @@ doca_error_t ec_decode(const char *pci_addr,
 		printf("%d ", state->dst_buffer[i]);
 	}
 	printf("\n");
-
-	// parity block 0
 	for(int i=0; i<=10; i++){
 		printf("%d ", state->dst_buffer[i + block_size]);
 	}
 	printf("\n");
+
+
 	printf("recover over\n");
 
 	return callback_result;
