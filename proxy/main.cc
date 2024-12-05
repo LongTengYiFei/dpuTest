@@ -1,64 +1,78 @@
-
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "./Jerasure/include/jerasure.h"
+#include "./Jerasure/include/reed_sol.h"
+#include "./Jerasure/include/cauchy.h"
 
-#include <doca_argp.h>
-#include <doca_error.h>
-#include <doca_dev.h>
-#include <doca_sha.h>
-#include <doca_log.h>
-#include <utils.h>
-#include "common.h"
+#include <sys/time.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-DOCA_LOG_REGISTER(PROXY::MAIN);
+#include "dpuProxy.h"
 
-#define GB (1024*1024*1024)
+#define K 4 // 数据块数量
+#define M 2 // 校验块数量
+#define W 8 // Galois 域的宽度
+#define MB (1*1024*1024)
+
+int main() {
+    struct timeval start_time, end_time;
+    gettimeofday(&start_time, 0);
+    int *matrix_RSvandermode = reed_sol_vandermonde_coding_matrix(K, M, W);
+    gettimeofday(&end_time, 0);
+    int time_cost_gen = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                     end_time.tv_usec - start_time.tv_usec;
+    printf("matrix gen time %d us\n", time_cost_gen);
 
 
-static doca_error_t sha1_hash_is_supported(struct doca_devinfo *devinfo)
-{
-	return doca_sha_cap_task_hash_get_supported(devinfo, DOCA_SHA_ALGORITHM_SHA1);
-}
+    int fd = open("./testInput", O_RDONLY);
+    lseek(fd, 0, SEEK_END);
+    size_t data_size = lseek(fd, 0, SEEK_CUR);
+    
+    char *data = (char *)malloc(data_size);
+    read(fd, data, data_size);
 
-/**
- * @brief This function check the hash engine is available or not.
- * @return true or false.
- */
-bool hash_engine_available(){
-	struct doca_dev *dev;
-	doca_error_t result = open_doca_device_with_capabilities(&sha1_hash_is_supported, &dev);
-	if (result != DOCA_SUCCESS) 
-		return false;
-	return true;
-}
+    // 分配数据块和校验块
+    int block_size = MB;
+    char **data_blocks = (char **)malloc(K * sizeof(char *));
+    char **coding_blocks = (char **)malloc(M * sizeof(char *));
+    for (int i = 0; i < K; i++) {
+        data_blocks[i] = (char *)malloc(block_size);
+        memcpy(data_blocks[i], data + i * block_size, block_size);
+    }
+    for (int i = 0; i < M; i++) {
+        coding_blocks[i] = (char *)malloc(block_size);
+    }
 
-int main(int argc, char **argv)
-{
-	doca_error_t result;
-	struct doca_log_backend *sdk_log;
-	int exit_status = EXIT_FAILURE;
-	
-	/* Register a logger backend */
-	result = doca_log_backend_create_standard();
-	if (result != DOCA_SUCCESS)
-		return 0;
+    // 进行编码
+    int cpu_encoding_time = 0;
+    printf("block size = %d\n", block_size);
+    gettimeofday(&start_time, 0);
+    jerasure_matrix_encode(K, M, W, matrix_RSvandermode, data_blocks, coding_blocks, block_size);
+    gettimeofday(&end_time, 0);
+    cpu_encoding_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                    end_time.tv_usec - start_time.tv_usec;
+    printf("CPU encoding time %d us\n", cpu_encoding_time);
+    printf("CPU encoding throughput %.2f MB/s\n", ((float)block_size*K / MB) / ((float)cpu_encoding_time / 1000000));
+    
 
-	/* Register a logger backend for internal SDK errors and warnings */
-	result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-	if (result != DOCA_SUCCESS){
-		return 0;
-	}
-		
-	result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_WARNING);
-	if (result != DOCA_SUCCESS){
-		return 0;
-	}
-		
-	if(hash_engine_available()){
-		printf("yes\n");
-	}else{
-		printf("no\n");
-	}
+    for (int i = 0; i < M; i++) {
+        memset(coding_blocks[i], 0, block_size);
+    }
+    
+    DPUProxy *dpu;
+    dpu = new DPUProxy();
+    dpu->initEC(K, M, block_size);
+    
+    int dpu_encoding_time = 0;
+    gettimeofday(&start_time, 0);
+    dpu->encode_chunks(data_blocks, coding_blocks, block_size);
+    gettimeofday(&end_time, 0);
+    dpu_encoding_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                    end_time.tv_usec - start_time.tv_usec;
+    printf("DPU accelerator encoding time %d us\n", dpu_encoding_time);
+    printf("DPU accelerator encoding throughput %.2f MB/s\n", ((float)block_size*K / MB) / ((float)dpu_encoding_time / 1000000));
 
-	return 0;
+    return 0;
 }

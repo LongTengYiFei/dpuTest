@@ -1,14 +1,15 @@
-SRC = main.cc /opt/mellanox/doca/samples/common.c /opt/mellanox/doca/applications/common/utils.c 
+SRC = dpuProxy.cc main.cc doca_common.cc
 
 INC = -I/opt/mellanox/doca/include \
 	  -I/opt/mellanox/doca/samples \
 	  -I/opt/mellanox/doca/applications/common/
 
-LIBS = -ldoca_sha -ldoca_common -ldoca_argp -lm \
-	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/
+LIBS = -ldoca_erasure_coding -ldoca_common -ldoca_argp -lm \
+	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/ \
+	   -lstdc++ -lcrypto -lJerasure -lgf_complete -L/usr/local/lib -ldoca_sha
 
-proxy:
-	gcc $(SRC) $(INC) $(LIBS) -o proxy -g
+dpuProxy:
+	gcc $(SRC) $(INC) $(LIBS) -o proxy_test -g 
 
 clean:
-	rm proxy
+	rm proxy_test
