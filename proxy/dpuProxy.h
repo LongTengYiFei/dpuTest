@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <sys/time.h>
 #include <doca_buf.h>
 #include <doca_buf_inventory.h>
 #include <doca_ctx.h>
@@ -73,7 +74,7 @@ private:
     // used for ec
     struct ec_resources ec_resources;
     struct doca_buf *ec_src_doca_buf;
-	struct doca_buf *ec_dst_doca_buf;
+    struct doca_buf *ec_dst_doca_buf;
     struct doca_ec_matrix *encoding_matrix; 
 	struct doca_ec_matrix *decoding_matrix;
     struct doca_ec_task_create *ec_task_create;
@@ -85,6 +86,10 @@ private:
     int ec_dst_size;
     int k;
     int m;
+
+public:
+    int copy_time_us;
+    struct timeval start_time, end_time;
 
 public:
     DPUProxy();
@@ -104,7 +109,7 @@ public:
     void waitingECTasks();
     void getECTaskResult(char** coding, int block_size);
     void resetECDestBuf();
-
+    
 private:
     void clearSHA();
     void clearEC();

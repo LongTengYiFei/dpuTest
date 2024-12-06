@@ -414,6 +414,7 @@ bool DPUProxy::ecEngineAvailable(){
 }
 
 void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
+    this->copy_time_us = 0;
     this->dt = DPU_TYPE_EC;
     this->state = &ec_resources.state;
     memset(&ec_resources, 0, sizeof(ec_resources));
@@ -430,7 +431,7 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
     this->m = rdnc_count;
 
     // TODO: configure PCI address
-    result = open_doca_device_with_pci("cb:00.0", (tasks_check)&doca_ec_cap_task_create_is_supported, &state->dev);
+    result = open_doca_device_with_pci("b1:00.0", (tasks_check)&doca_ec_cap_task_create_is_supported, &state->dev);
     
     result = create_core_objects(this->state, 2);
     result = doca_ec_create(state->dev, &ec_resources.ec_ctx);
@@ -510,8 +511,12 @@ void DPUProxy::encode_chunks(char**data, char** coding, int block_size){
 void DPUProxy::submitOneECTask(char** data, int block_size){
 	ec_resources.run_pe_progress = true;
 
+    gettimeofday(&start_time, 0);
     for(int i=0, off=0; i<=this->k-1; i++, off+=block_size)
         memcpy(this->ec_src + off, data[i], block_size);
+    gettimeofday(&end_time, 0);
+    this->copy_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
     
     result = doca_task_submit(this->ec_task);
     if (result != DOCA_SUCCESS) {
@@ -521,8 +526,12 @@ void DPUProxy::submitOneECTask(char** data, int block_size){
 }
 
 void DPUProxy::getECTaskResult(char** coding, int block_size){
+    gettimeofday(&start_time, 0);
     for(int i=0, coding_off=0; i<=this->m-1; i++, coding_off+=block_size)
         memcpy(coding[i], ec_dst+coding_off, block_size);
+    gettimeofday(&end_time, 0);
+    this->copy_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
 }
 
 void DPUProxy::resetECDestBuf(){

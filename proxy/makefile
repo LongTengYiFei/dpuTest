@@ -9,7 +9,7 @@ LIBS = -ldoca_erasure_coding -ldoca_common -ldoca_argp -lm \
 	   -lstdc++ -lcrypto -lJerasure -lgf_complete -L/usr/local/lib -ldoca_sha
 
 dpuProxy:
-	gcc $(SRC) $(INC) $(LIBS) -o proxy_test -g 
+	gcc $(SRC) $(INC) $(LIBS) -o proxy_test -g  -fno-omit-frame-pointer
 
 clean:
 	rm proxy_test
