@@ -11,11 +11,11 @@
 
 #include "dpuProxy.h"
 
-#define K 4 // 数据块数量
-#define M 2 // 校验块数量
+#define K 5 // 数据块数量
+#define M 1 // 校验块数量
 #define W 8 // Galois 域的宽度
 #define MB (1*1024*1024)
-#define KB (1024*1024)
+#define KB (1024)
 
 int main() {
     struct timeval start_time, end_time;
@@ -35,7 +35,7 @@ int main() {
     read(fd, data, data_size);
 
     // 分配数据块和校验块
-    int block_size = MB;
+    int block_size = 512*KB;
     int stripe_size = block_size * K;
     char **data_blocks = (char **)malloc(K * sizeof(char *));
     char **coding_blocks = (char **)malloc(M * sizeof(char *));
@@ -62,7 +62,8 @@ int main() {
                         end_time.tv_usec - start_time.tv_usec;
     }
     printf("CPU encoding time %d us\n", cpu_encoding_time);
-    printf("CPU encoding throughput %.2f MB/s\n", ((float)data_size / MB) / ((float)cpu_encoding_time / 1000000));
+    float cpu_thr = ((float)data_size / MB) / ((float)cpu_encoding_time / 1000000);
+    printf("CPU encoding throughput %.2f MB/s\n", cpu_thr);
     
     // DPU 加速
     DPUProxy *dpu;
@@ -94,8 +95,13 @@ int main() {
     printf("DPU accelerator encoding time %d us\n", dpu_encoding_time);
 
     printf("Save time FAKE %d us\n", cpu_encoding_time - (dpu_encoding_time-dpu->copy_time_us));
-    printf("DPU accelerator encoding throughput FAKE %.2f MB/s\n", ((float)data_size / MB) / (((float)dpu_encoding_time-(float)dpu->copy_time_us) / 1000000));
-    printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", ((float)data_size / MB) / ((float)dpu_encoding_time / 1000000));
+    float dpu_fake_thr = ((float)data_size / MB) / (((float)dpu_encoding_time-(float)dpu->copy_time_us) / 1000000);
+    float dpu_real_thr = ((float)data_size / MB) / ((float)dpu_encoding_time / 1000000);
+    printf("DPU accelerator encoding throughput FAKE %.2f MB/s\n", dpu_fake_thr);
+    printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", dpu_real_thr);
 
+    printf("%.2f\n", dpu_fake_thr);
+    printf("%.2f\n", dpu_real_thr);
+    printf("%.2f\n", cpu_thr);
     return 0;
 }
