@@ -222,6 +222,20 @@ doca_error_t compressFileDOCA(const char *file_name){
 	return result;
 }
 
+void printStat(){
+	printf("used time ms: %d\n", compress_time_us / 1000);
+	printf("compression speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (compress_time_us / 1000000.0));
+	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
+	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
+	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
+}
+
+void resetStat(){
+	compress_time_us = 0;
+	total_size_before_compression = 0;
+	total_size_after_compression = 0;
+}
+
 void traverseDir(const char *base_path) {
     DIR *dir;
     struct dirent *entry;
@@ -257,7 +271,6 @@ void traverseDir(const char *base_path) {
         else if (S_ISREG(info.st_mode)) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".log") == 0) {
-				 printf("Process file: %s\n", path);
                 compressFileDOCA(path);
             }
         }
@@ -266,6 +279,75 @@ void traverseDir(const char *base_path) {
     // 关闭目录
     closedir(dir);
 }
+
+int compare(const void *a, const void *b) {
+    return strcmp(*(const char **)a, *(const char **)b);
+}
+
+#define MAX_PATH_LENGTH 1024
+void traverseDirOneLayer(char* base_dir){
+	    DIR *dir;
+    struct dirent *entry;
+    char path[MAX_PATH_LENGTH];
+    struct stat info;
+    char *subdirs[MAX_PATH_LENGTH];
+    int subdir_count = 0;
+
+    // 打开目录
+    if ((dir = opendir(base_dir)) == NULL) {
+        perror("无法打开目录");
+        return;
+    }
+
+    // 遍历目录项
+    while ((entry = readdir(dir)) != NULL) {
+        // 忽略 "." 和 ".." 目录
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // 构建完整路径
+        snprintf(path, sizeof(path), "%s/%s", base_dir, entry->d_name);
+
+        // 获取文件信息
+        if (stat(path, &info) != 0) {
+            perror("获取文件信息错误");
+            continue;
+        }
+
+        // 如果是目录，保存目录名
+        if (S_ISDIR(info.st_mode)) {
+            subdirs[subdir_count] = strdup(entry->d_name);
+            if (subdirs[subdir_count] == NULL) {
+                perror("内存分配错误");
+                closedir(dir);
+                return;
+            }
+            subdir_count++;
+        }
+    }
+
+    // 关闭目录
+    closedir(dir);
+
+    // 按字典序排序子目录名
+    qsort(subdirs, subdir_count, sizeof(char *), compare);
+
+    // 打印排序后的子目录的绝对路径
+    for (int i = 0; i < subdir_count; i++) {
+        char abs_path[MAX_PATH_LENGTH];
+        snprintf(path, sizeof(path), "%s/%s", base_dir, subdirs[i]);
+        if (realpath(path, abs_path) != NULL) {
+            printf("%s\n", abs_path);
+			traverseDir(abs_path);
+			printStat();
+			resetStat();
+        } else {
+            perror("获取绝对路径错误");
+        }
+        free(subdirs[i]);
+    }
+}
+
 
 int main(int argc, char **argv)
 {
@@ -315,11 +397,5 @@ int main(int argc, char **argv)
 	}
 
 	initCompressionResources();
-	traverseDir("/home/cyf/ssd1/benchmark_log_files");
-
-	printf("used time ms: %d\n", compress_time_us / 1000);
-	printf("compression speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (compress_time_us / 1000000.0));
-	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
-	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
-	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
+	traverseDirOneLayer("/home/cyf/ssd1/benchmark_log_files/");
 }
