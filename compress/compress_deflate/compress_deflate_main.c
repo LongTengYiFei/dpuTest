@@ -31,13 +31,17 @@
 #include <sys/time.h>
 #include <utils.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include "common.h"
 #include "compress_common.h"
 
 DOCA_LOG_REGISTER(COMPRESS_DEFLATE::MAIN);
 
-doca_error_t compress_deflate(char* file_name);
 #define GB (1024ul * 1024ul * 1024ul)
 #define MB (1024ul * 1024ul)
 
@@ -47,33 +51,34 @@ struct compress_deflate_result {
 	uint32_t adler_cs;   /**< The Adler Checksum */
 };
 
-doca_error_t compress_deflate(char* file_name)
+// 全局变量
+int block_size_after_compression;
+unsigned long compress_time_us = 0;
+unsigned long total_size_before_compression = 0;
+unsigned long total_size_after_compression = 0;
+struct compress_cfg compress_cfg;
+struct doca_log_backend *sdk_log;
+int block_size;
+char* src_buffer;
+char* dst_buffer;
+uint64_t max_buf_size, max_output_size;
+uint32_t max_bufs = 2;
+struct compress_resources resources = {0};
+struct program_core_objects *state;
+struct doca_buf *src_doca_buf;
+struct doca_buf *dst_doca_buf;
+doca_error_t result;
+struct doca_task *task;
+struct doca_compress_task_compress_deflate *compress_task;
+union doca_data task_user_data = {0};
+struct compress_deflate_result task_result = {0};
+struct timespec ts = {
+	.tv_sec = 0,
+	.tv_nsec = SLEEP_IN_NANOS,
+};
+
+doca_error_t initCompressionResources()
 {
-	/*
-		切片读文件，每次读一点到src_buffer中，覆盖原来的数据；
-	*/	
-
-	struct compress_resources resources = {0};
-	struct program_core_objects *state;
-	struct doca_buf *src_doca_buf;
-	struct doca_buf *dst_doca_buf;
-	/* The sample will use 2 doca buffers */
-	uint32_t max_bufs = 2;
-	uint64_t output_checksum = 0;
-	uint32_t adler_checksum = 0;
-	doca_be32_t be_adler_checksum;
-
-	
-	char *dst_buffer;
-	void *dst_buf_data, *dst_buf_tail;
-	size_t data_len, write_len, written_len;
-	FILE *out_file;
-	doca_error_t result, tmp_result;
-	uint64_t max_buf_size, max_output_size;
-
-	int fd = open(file_name, O_RDONLY);
-
-
 	/* Allocate resources */
 	resources.mode = COMPRESS_MODE_COMPRESS_DEFLATE;
 	result = allocate_compress_resources("b1:00.0", max_bufs, &resources);
@@ -87,7 +92,8 @@ doca_error_t compress_deflate(char* file_name)
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to query compress max buf size: %s", doca_error_get_descr(result));
 
-	char *src_buffer = (char*)malloc(max_buf_size);
+	block_size = max_buf_size;
+	src_buffer = (char*)malloc(max_buf_size);
 
 	// 默认最大2M
 	max_output_size = max_buf_size;
@@ -139,14 +145,7 @@ doca_error_t compress_deflate(char* file_name)
 			     doca_error_get_descr(result));
 
 	// alloc task
-	struct doca_compress_task_compress_deflate *compress_task;
-	struct doca_task *task;
-	union doca_data task_user_data = {0};
-	struct compress_deflate_result task_result = {0};
-	struct timespec ts = {
-		.tv_sec = 0,
-		.tv_nsec = SLEEP_IN_NANOS,
-	};
+
 
 	task_user_data.ptr = &task_result;
 	result = doca_compress_task_compress_deflate_alloc_init(resources.compress,
@@ -161,23 +160,20 @@ doca_error_t compress_deflate(char* file_name)
 
 	task = doca_compress_task_compress_deflate_as_task(compress_task);
 
-
-	// 每次循环都要设置src doca buf，然后reset dst doca buf的长度
-	
-	int block_size = max_buf_size;
-
 	// set 一次就行了，这个地址已经注册过，之后反复read覆盖；
 	result = doca_buf_set_data(src_doca_buf, src_buffer, block_size);
 	if (result != DOCA_SUCCESS){
 		DOCA_LOG_ERR("Unable to set data in the DOCA buffer representing source buffer: %s", doca_error_get_descr(result));
 		return result;
 	}
+}
 
+doca_error_t compressFileDOCA(const char *file_name){
+	/*
+		切片读文件，每次读一点到src_buffer中，覆盖原来的数据；
+	*/	
 
-	int compress_time_us = 0;
-	int size_after_compression;
-	unsigned long total_size_before_compression = 0;
-	unsigned long total_size_after_compression = 0;
+	int fd = open(file_name, O_RDONLY);
 	// 没搞懂为啥超过2GB就任务失败
 	for(;;){
 		// read from file
@@ -213,32 +209,68 @@ doca_error_t compress_deflate(char* file_name)
 		if (task_result.status != DOCA_SUCCESS)
 			return task_result.status;
 
-		result = doca_buf_get_data_len(dst_doca_buf, &size_after_compression);
+		result = doca_buf_get_data_len(dst_doca_buf, &block_size_after_compression);
 		if (result != DOCA_SUCCESS) {
 			DOCA_LOG_ERR("Unable to get data length in the DOCA buffer representing destination buffer: %s", doca_error_get_descr(result));
 			return result;
 		}
-		total_size_after_compression += size_after_compression;
-		
+		total_size_after_compression += block_size_after_compression;
 	}
 
-	printf("used time ms: %d\n", compress_time_us / 1000);
-	printf("compression speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (compress_time_us / 1000000.0));
-	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
-	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
-	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
+	close(fd);
 
 	return result;
+}
+
+void traverseDir(const char *base_path) {
+    DIR *dir;
+    struct dirent *entry;
+    char path[1024];
+    struct stat info;
+
+    // 打开目录
+    if ((dir = opendir(base_path)) == NULL) {
+        perror("opendir() error");
+        return;
+    }
+
+    // 遍历目录项
+    while ((entry = readdir(dir)) != NULL) {
+        // 忽略 "." 和 ".." 目录
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        // 构建完整路径
+        snprintf(path, sizeof(path), "%s/%s", base_path, entry->d_name);
+
+        // 获取文件信息
+        if (stat(path, &info) != 0) {
+            perror("stat() error");
+            continue;
+        }
+
+        // 如果是目录，递归调用
+        if (S_ISDIR(info.st_mode)) {
+            traverseDir(path);
+        }
+        // 如果是文件且以 ".log" 结尾，打印文件路径
+        else if (S_ISREG(info.st_mode)) {
+            const char *ext = strrchr(entry->d_name, '.');
+            if (ext && strcmp(ext, ".log") == 0) {
+				 printf("Process file: %s\n", path);
+                compressFileDOCA(path);
+            }
+        }
+    }
+
+    // 关闭目录
+    closedir(dir);
 }
 
 int main(int argc, char **argv)
 {
 	doca_error_t result;
-	struct compress_cfg compress_cfg;
-	uint8_t *file_data = (uint8_t*)malloc(GB);;
-	size_t file_size;
-	struct doca_log_backend *sdk_log;
-	int exit_status = EXIT_FAILURE;
+
 
 	result = doca_log_backend_create_standard();
 	if (result != DOCA_SUCCESS){
@@ -282,5 +314,12 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	compress_deflate("/home/cyf/dpuTest/compress/applogcat.log");
+	initCompressionResources();
+	traverseDir("/home/cyf/ssd1/benchmark_log_files");
+
+	printf("used time ms: %d\n", compress_time_us / 1000);
+	printf("compression speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (compress_time_us / 1000000.0));
+	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
+	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
+	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
 }
