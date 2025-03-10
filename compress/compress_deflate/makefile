@@ -1,4 +1,4 @@
-SRC = compress_deflate_main.c compress_deflate_sample.c compress_common.c /opt/mellanox/doca/samples/common.c /opt/mellanox/doca/applications/common/utils.c
+SRC = compress_deflate_main.c compress_common.c /opt/mellanox/doca/samples/common.c /opt/mellanox/doca/applications/common/utils.c
 SRC1 = cpu_test.c
 SRC2 = cpu_test2.c
 INC = -I/opt/mellanox/doca/include \
