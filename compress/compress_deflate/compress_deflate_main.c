@@ -36,6 +36,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <zlib.h>
 
 #include "common.h"
 #include "compress_common.h"
@@ -53,13 +54,15 @@ struct compress_deflate_result {
 
 // 全局变量
 int block_size_after_compression;
-unsigned long compress_time_us = 0;
+unsigned long copy_time_us = 0;
+unsigned long doca_compress_time_us = 0;
 unsigned long total_size_before_compression = 0;
 unsigned long total_size_after_compression = 0;
 struct compress_cfg compress_cfg;
 struct doca_log_backend *sdk_log;
 int block_size;
 char* src_buffer;
+char* read_buffer;
 char* dst_buffer;
 uint64_t max_buf_size, max_output_size;
 uint32_t max_bufs = 2;
@@ -94,6 +97,7 @@ doca_error_t initCompressionResources()
 
 	block_size = max_buf_size;
 	src_buffer = (char*)malloc(max_buf_size);
+	read_buffer = (char*)malloc(max_buf_size);
 
 	// 默认最大2M
 	max_output_size = max_buf_size;
@@ -174,19 +178,27 @@ doca_error_t compressFileDOCA(const char *file_name){
 	*/	
 
 	int fd = open(file_name, O_RDONLY);
+	struct timeval start_time, end_time;
 	// 没搞懂为啥超过2GB就任务失败
 	for(;;){
 		// read from file
-		int n = read(fd, src_buffer, block_size);
+		int n = read(fd, read_buffer, block_size);
 		total_size_before_compression += n;
 		if(n == 0) break;
 
-		// reset
-		doca_buf_reset_data_len(dst_doca_buf);
 
-		struct timeval start_time, end_time;
 		gettimeofday(&start_time, NULL);
-		/* Submit compress task */
+		// copy 
+		memcpy(src_buffer, read_buffer, n);
+		gettimeofday(&end_time, NULL);
+		copy_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+
+		gettimeofday(&start_time, NULL);
+		// reset	
+		doca_buf_reset_data_len(dst_doca_buf);
+		doca_buf_set_data(src_doca_buf, src_buffer, n);
+
+		// Submit 
 		resources.num_remaining_tasks++;
 		result = doca_task_submit(task);
 		if (result != DOCA_SUCCESS) {
@@ -194,16 +206,16 @@ doca_error_t compressFileDOCA(const char *file_name){
 			doca_task_free(task);
 			return result;
 		}
-
 		resources.run_pe_progress = true;
 
-		/* Wait for all tasks to be completed */
+		// wait
 		while (resources.run_pe_progress) {
 			if (doca_pe_progress(state->pe) == 0)
 				nanosleep(&ts, &ts);
 		}
+
 		gettimeofday(&end_time, NULL);
-		compress_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+		doca_compress_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
 
 		/* Check result of task according to the result we update in the callbacks */
 		if (task_result.status != DOCA_SUCCESS)
@@ -222,16 +234,50 @@ doca_error_t compressFileDOCA(const char *file_name){
 	return result;
 }
 
+
+char* cpu_dst_buffer = NULL;
+char* cpu_src_buffer = NULL;
+unsigned long cpu_dst_len;
+void initBufferCPU(){
+	cpu_dst_buffer = malloc(4*1024*1024);
+	cpu_src_buffer = malloc(2*1024*1024);
+}	
+
+void compressFileCPU(const char *file_name){
+	int fd = open(file_name, O_RDONLY);
+	// 没搞懂为啥超过2GB就任务失败
+	for(;;){
+		// read from file
+		unsigned long n = read(fd, cpu_src_buffer, block_size);
+		total_size_before_compression += n;
+		if(n == 0) break;
+		cpu_dst_len = 4*1024*1024;
+		struct timeval start_time, end_time;
+		gettimeofday(&start_time, NULL);
+		int comp_ret = compress2(cpu_dst_buffer, &cpu_dst_len, cpu_src_buffer, n, 6);
+		gettimeofday(&end_time, NULL);
+		
+		doca_compress_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+		total_size_after_compression += cpu_dst_len;
+	}
+
+	close(fd);
+}
+
 void printStat(){
-	printf("used time ms: %d\n", compress_time_us / 1000);
-	printf("compression speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (compress_time_us / 1000000.0));
+	printf("copy time ms: %d\n", copy_time_us / 1000);
+	printf("doca compress time ms: %d\n", doca_compress_time_us / 1000);
+	printf("compression speed (no copy) %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_compress_time_us / 1000000.0));
+	printf("compression speed (copy) %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / ((doca_compress_time_us+copy_time_us) / 1000000.0));
+
 	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
 	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
 	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
 }
 
 void resetStat(){
-	compress_time_us = 0;
+	doca_compress_time_us = 0;
+	copy_time_us = 0;
 	total_size_before_compression = 0;
 	total_size_after_compression = 0;
 }
@@ -272,6 +318,7 @@ void traverseDir(const char *base_path) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".log") == 0) {
                 compressFileDOCA(path);
+				//compressFileCPU(path);
             }
         }
     }
@@ -396,6 +443,7 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	//initBufferCPU();
 	initCompressionResources();
 	traverseDirOneLayer("/home/cyf/ssd1/benchmark_log_files/");
 }
