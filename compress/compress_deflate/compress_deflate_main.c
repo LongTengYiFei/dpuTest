@@ -172,7 +172,10 @@ doca_error_t initCompressionResources()
 	}
 }
 
-doca_error_t compressFileDOCA(const char *file_name){
+/*
+	使用doca压缩文件片段，并计算吞吐量；
+*/
+doca_error_t test1(const char *file_name){
 	/*
 		切片读文件，每次读一点到src_buffer中，覆盖原来的数据；
 	*/	
@@ -233,30 +236,34 @@ doca_error_t compressFileDOCA(const char *file_name){
 	return result;
 }
 
-
 char* cpu_dst_buffer_compress = NULL;
 char* cpu_src_buffer_compress = NULL;
 char* cpu_dst_buffer_decompress = NULL;
 unsigned long cpu_dst_len_compress;
 unsigned long cpu_dst_len_decompress;
 unsigned long cpu_src_len_decompress;
-int cpu_decompress_buffer_size = 8*1024*1024;
+int cpu_decompress_dst_buffer_size = 8*1024*1024;
+int cpu_compress_dst_buffer_size = 4*1024*1024;
 int cpu_read_block_size = 2*1024*1024;
+
 void initBufferCPU(){
-	cpu_dst_buffer_decompress = malloc(cpu_decompress_buffer_size);
-	cpu_dst_buffer_compress = malloc(4*1024*1024);
+	cpu_dst_buffer_decompress = malloc(cpu_decompress_dst_buffer_size);
+	cpu_dst_buffer_compress = malloc(cpu_compress_dst_buffer_size);
 	cpu_src_buffer_compress = malloc(cpu_read_block_size);
 }	
 
-void compressFileCPU(const char *file_name){
+/*
+	使用cpu压缩文件片段，然后再解压文件片段，并计算吞吐量；
+*/
+void test2(const char *file_name){
 	int fd = open(file_name, O_RDONLY);
 	for(;;){
 		// read from file
 		unsigned long n = read(fd, cpu_src_buffer_compress, cpu_read_block_size);
 		total_size_before_compression += n;
 		if(n == 0) break;
-		cpu_dst_len_compress = 4*1024*1024;
-		cpu_dst_len_decompress = cpu_decompress_buffer_size;
+		cpu_dst_len_compress = cpu_compress_dst_buffer_size;
+		cpu_dst_len_decompress = cpu_decompress_dst_buffer_size;
 		struct timeval start_time, end_time;
 
 		gettimeofday(&start_time, NULL);
@@ -335,7 +342,7 @@ void traverseDir(const char *base_path) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".log") == 0) {
                 //compressFileDOCA(path);
-				compressFileCPU(path);
+				test2(path);
             }
         }
     }
@@ -460,6 +467,6 @@ int main(int argc, char **argv)
 	}
 
 	initBufferCPU();
-	//initCompressionResources();
+	initCompressionResources();
 	traverseDirOneLayer("/home/cyf/ssd1/benchmark_log_files/");
 }
