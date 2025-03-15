@@ -417,7 +417,6 @@ int main(int argc, char **argv)
 {
 	doca_error_t result;
 
-
 	result = doca_log_backend_create_standard();
 	if (result != DOCA_SUCCESS){
 		DOCA_LOG_ERR("ERROR: %s", doca_error_get_descr(result));
