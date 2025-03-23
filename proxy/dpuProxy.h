@@ -73,13 +73,8 @@ private:
 
     // used for ec
     struct ec_resources ec_resources;
-    struct doca_buf *ec_src_doca_buf;
-    struct doca_buf *ec_dst_doca_buf;
     struct doca_ec_matrix *encoding_matrix; 
 	struct doca_ec_matrix *decoding_matrix;
-    struct doca_ec_task_create *ec_task_create;
-    struct doca_ec_task_recover *ec_task_recover;
-    struct doca_task *ec_task;
     char* ec_src;
     char* ec_dst;
     int ec_src_size;
@@ -87,8 +82,25 @@ private:
     int k;
     int m;
 
+    struct doca_buf *ec_src_doca_buf;
+    struct doca_buf *ec_dst_doca_buf;
+    struct doca_ec_task_create *ec_task_create;
+    struct doca_ec_task_recover *ec_task_recover;
+    struct doca_task *ec_task;
+
+    int ec_batch_size;
+    struct doca_buf **ec_src_doca_buf_batch;
+    struct doca_buf **ec_dst_doca_buf_batch;
+    struct doca_ec_task_create **ec_task_create_batch;
+    struct doca_task **ec_task_batch;
+    doca_error_t* ec_task_result_batch;
+    union doca_data* task_user_data_ec_batch;
+    int ec_batch_process_time;
+
 public:
     int copy_time_us;
+    int encode_time_us;
+    int test_time_us;
     struct timeval start_time, end_time;
 
 public:
@@ -105,11 +117,21 @@ public:
     static bool ecEngineAvailable();
     void encode_chunks(char**data, char** coding, int block_size);
     void initEC(int k, int m, int block_size);
+    void registerMemoryEC(char** data, char** coding, int block_size);
     void submitOneECTask(char** data, int block_size);
     void waitingECTasks();
     void getECTaskResult(char** coding, int block_size);
     void resetECDestBuf();
-    
+
+    void initECBatch(int k, int m, int block_size, int batch_size);
+    void resetECDestBufBatch();
+    void submitECTaskBatch();
+    void waitingECTasksBatch();
+    void prepareECBatch(char* input_data, int block_size, int k, int batch_size);
+    void encode_chunks(char* input_data, int block_size, int k, int batch_size);
+    void getECTaskResultBatch(int i, char** coding, int block_size);
+    int getECBatchProcessTime();
+
 private:
     void clearSHA();
     void clearEC();

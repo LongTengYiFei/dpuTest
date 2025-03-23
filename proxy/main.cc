@@ -193,17 +193,55 @@ void dpuEncodeTest(string input_file_path, int k, int m, int w, int block_size){
         writeBlocks("./dataBlocks", true, k, data_blocks, block_size); 
         writeBlocks("./codeBlocks", false, m, coding_blocks, block_size);        
     }
-    printf("DPU accelerator encoding time %d us\n", dpu_encoding_time);
-
-    float dpu_fake_thr = ((float)data_size / MB) / (((float)dpu_encoding_time-(float)dpu->copy_time_us) / 1000000);
+    
+    printf("DPU accelerator total encoding time %d us\n", dpu_encoding_time);
     float dpu_real_thr = ((float)data_size / MB) / ((float)dpu_encoding_time / 1000000);
-    printf("DPU accelerator encoding throughput FAKE %.2f MB/s\n", dpu_fake_thr);
     printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", dpu_real_thr);
+}
+
+void dpuEncodeTestBatch(string input_file_path, int k, int m, int w, int block_size, int batch_size){
+    struct timeval start_time, end_time;
+    // DPU prepare
+    DPUProxy *dpu;
+    dpu = new DPUProxy();
+    dpu->initECBatch(k, m, block_size, batch_size);
+    
+    // file prepare
+    int fd = open(input_file_path.c_str(), O_RDONLY);
+    lseek(fd, 0, SEEK_END);
+    size_t data_size = lseek(fd, 0, SEEK_CUR);
+    if(data_size % (k * block_size)){
+        cout<< "文件长度不是K*block size的整数倍" <<endl;
+        cout<< "k = " << k <<endl;
+        cout<< "block size = " << block_size <<endl;
+        return ;
+    }
+    char *input_data = (char *)malloc(data_size);
+    read(fd, input_data, data_size);
+
+    // allocate data block and code block space
+    int stripe_size = block_size * k;
+
+    for(int i=0; i<=data_size/stripe_size/batch_size -1;i++){
+        dpu->encode_chunks(input_data + batch_size*stripe_size, block_size, k, batch_size);
+    }
+
+    float dpu_real_thr = ((float)data_size / MB) / ((float)dpu->getECBatchProcessTime() / 1000000);
+    printf("data size %d MB\n", data_size / MB);
+    printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", dpu_real_thr);
+    printf("DPU accelerator total encoding time %d us\n", dpu->getECBatchProcessTime());
 }
 
 int main(int argc, char** argv) {
     char* file_name = argv[1];
-    cpuTest(file_name, K, M, W, BLOCK_SIZE);
-    //dpuEncodeTest(file_name, K, M, W, BLOCK_SIZE);
+    if(strcmp(argv[2], "dpu") == 0){
+        dpuEncodeTest(file_name, K, M, W, BLOCK_SIZE);
+    }else if (strcmp(argv[2], "dpuBatch") == 0){
+        int batch_size = atoi(argv[3]);
+        dpuEncodeTestBatch(file_name, K, M, W, BLOCK_SIZE, batch_size);
+    }else if(strcmp(argv[2], "cpu") == 0){
+        cpuTest(file_name, K, M, W, BLOCK_SIZE);
+    }
+    
     return 0;
 }

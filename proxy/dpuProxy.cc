@@ -113,11 +113,12 @@ static void ec_create_completed_callback(struct doca_ec_task_create *create_task
 					 union doca_data ctx_user_data)
 {
     doca_error_t *result = (doca_error_t *)task_user_data.ptr;
+    *result = DOCA_SUCCESS;
+
 	struct ec_resources *resources = (struct ec_resources *)ctx_user_data.ptr;
-
-	*result = DOCA_SUCCESS;
-
-	resources->run_pe_progress = false;
+    --resources->num_remaining_tasks;
+    if(resources->num_remaining_tasks == 0)
+	    resources->run_pe_progress = false;
 }
 
 DPUProxy::DPUProxy(){
@@ -360,10 +361,15 @@ void DPUProxy::waitingHashTasks(){
 }
 
 void DPUProxy::waitingECTasks(){
+    gettimeofday(&start_time, 0);
     while (ec_resources.run_pe_progress) {
         if (doca_pe_progress(state->pe) == 0)
             ;
     }
+    gettimeofday(&end_time, 0);
+    this->encode_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
+
 }
 
 std::string DPUProxy::getHashTaskResult(int task_number){
@@ -421,9 +427,11 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
     this->ctx_user_data = {0};
 	this->task_user_data = {0};
 
+    int thread_num = 2;
+
     // doca 默认最大block size 1MB
-    this->ec_src_size = data_count * block_size;
-    this->ec_dst_size = rdnc_count * block_size;
+    this->ec_src_size = data_count * block_size * thread_num;
+    this->ec_dst_size = rdnc_count * block_size * thread_num;
     this->ec_src = (char*)malloc(ec_src_size);
     this->ec_dst = (char*)malloc(ec_dst_size);
 
@@ -432,7 +440,7 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
 
     // TODO: configure PCI address
     result = open_doca_device_with_pci("b1:00.0", (tasks_check)&doca_ec_cap_task_create_is_supported, &state->dev);
-    
+
     result = create_core_objects(this->state, 2);
     result = doca_ec_create(state->dev, &ec_resources.ec_ctx);
     state->ctx = doca_ec_as_ctx(ec_resources.ec_ctx);
@@ -453,7 +461,6 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
 						    this->ec_dst,
 						    this->ec_dst_size,
 						    &this->ec_dst_doca_buf);
-
 	result = doca_buf_set_data(this->ec_src_doca_buf, this->ec_src, this->ec_src_size);
 
 	ctx_user_data.ptr = &ec_resources;
@@ -469,21 +476,11 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
 
     result = doca_ctx_start(state->ctx);
 
-    // jerasure给的矩阵不能直接用，得转置一下，而且还得是uint8；
-	int* tmp = reed_sol_vandermonde_coding_matrix(data_count,rdnc_count,8); // 偶发性bug，暂不清楚为啥
-	uint8_t* vandermonde_matrix = (uint8_t*)malloc(sizeof(uint8_t)*data_count*rdnc_count);
-	for(int i=0; i<=rdnc_count-1; i++){
-		for(int j=0; j<=data_count-1; j++){
-			vandermonde_matrix[i +j*rdnc_count] = tmp[i*data_count +j];
-		}
-	}
-	result = doca_ec_matrix_create_from_raw(ec_resources.ec_ctx,
-				       vandermonde_matrix,
+	result = doca_ec_matrix_create(ec_resources.ec_ctx,
+				       DOCA_EC_MATRIX_TYPE_VANDERMONDE,
 				       data_count,
 				       rdnc_count,
 				       &this->encoding_matrix);
-    free(vandermonde_matrix);
-    free(tmp);
 
 	task_user_data.ptr = &task_result;
 
@@ -493,7 +490,6 @@ void DPUProxy::initEC(int data_count, int rdnc_count, int block_size){
 						   this->ec_dst_doca_buf,
 						   task_user_data,
 						   &ec_task_create);
-
 	this->ec_task = doca_ec_task_create_as_task(ec_task_create);
     if(this->ec_task == nullptr){
         printf("create task error\n");
@@ -517,12 +513,16 @@ void DPUProxy::submitOneECTask(char** data, int block_size){
     gettimeofday(&end_time, 0);
     this->copy_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
                          end_time.tv_usec - start_time.tv_usec;
-    
+    gettimeofday(&start_time, 0);
+
     result = doca_task_submit(this->ec_task);
     if (result != DOCA_SUCCESS) {
         printf("fatal error\n");
         exit(-1);
     }
+    gettimeofday(&end_time, 0);
+    this->encode_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
 }
 
 void DPUProxy::getECTaskResult(char** coding, int block_size){
@@ -537,3 +537,154 @@ void DPUProxy::getECTaskResult(char** coding, int block_size){
 void DPUProxy::resetECDestBuf(){
 	doca_buf_reset_data_len(ec_dst_doca_buf);
 }
+
+void DPUProxy::initECBatch(int data_count, int rdnc_count, int block_size, int batch_size){
+    this->copy_time_us = 0;
+
+    this->ec_batch_size = batch_size;
+    this->dt = DPU_TYPE_EC;
+
+    memset(&ec_resources, 0, sizeof(ec_resources));
+    this->state = &ec_resources.state;
+
+    // doca 默认最大block size 1MB
+    this->ec_src_size = data_count * block_size * batch_size;
+    this->ec_dst_size = rdnc_count * block_size * batch_size;
+    this->ec_src = (char*)malloc(ec_src_size);
+    this->ec_dst = (char*)malloc(ec_dst_size);
+
+    this->k = data_count;
+    this->m = rdnc_count;
+
+    result = open_doca_device_with_pci("b1:00.0", (tasks_check)&doca_ec_cap_task_create_is_supported, &state->dev);
+
+    int max_buf_size = batch_size * 2; // src buffer num + dst buffer num
+    result = create_core_objects(this->state, max_buf_size);
+    result = doca_ec_create(state->dev, &ec_resources.ec_ctx);
+    state->ctx = doca_ec_as_ctx(ec_resources.ec_ctx);
+    result = doca_pe_connect_ctx(this->state->pe, this->state->ctx);
+
+    result = doca_mmap_set_memrange(this->state->src_mmap, this->ec_src, this->ec_src_size);
+	result = doca_mmap_start(this->state->src_mmap);
+    result = doca_mmap_set_memrange(this->state->dst_mmap, this->ec_dst, this->ec_dst_size);
+	result = doca_mmap_start(this->state->dst_mmap);
+
+    this->ec_src_doca_buf_batch = (struct doca_buf**)malloc(max_buf_size * sizeof(struct doca_buf*));
+	this->ec_dst_doca_buf_batch = (struct doca_buf**)malloc(max_buf_size * sizeof(struct doca_buf*));
+
+    for(int i=0; i<=batch_size-1; i++){
+        result = doca_buf_inventory_buf_get_by_addr(state->buf_inv,
+						    this->state->src_mmap,
+						    this->ec_src,
+						    this->ec_src_size,
+						    &this->ec_src_doca_buf_batch[i]);
+	    result = doca_buf_inventory_buf_get_by_addr(state->buf_inv,
+						    this->state->dst_mmap,
+						    this->ec_dst,
+						    this->ec_dst_size,
+						    &this->ec_dst_doca_buf_batch[i]);
+    }
+
+    this->ctx_user_data = {0};
+	ctx_user_data.ptr = &ec_resources;
+	result = doca_ctx_set_user_data(state->ctx, ctx_user_data);
+	result = doca_ctx_set_state_changed_cb(state->ctx, ec_state_changed_callback);
+
+	ec_resources.run_pe_progress = true;
+
+	result = doca_ec_task_create_set_conf(ec_resources.ec_ctx,
+					      ec_create_completed_callback,
+					      ec_create_error_callback,
+					      batch_size);
+
+    result = doca_ctx_start(state->ctx);
+
+	result = doca_ec_matrix_create(ec_resources.ec_ctx,
+				       DOCA_EC_MATRIX_TYPE_VANDERMONDE,
+				       data_count,
+				       rdnc_count,
+				       &this->encoding_matrix);
+    
+    task_user_data_ec_batch = new union doca_data[batch_size];
+    ec_task_result_batch = new doca_error_t[batch_size];
+    ec_task_create_batch = new doca_ec_task_create*[batch_size];
+    ec_task_batch = new doca_task*[batch_size];
+
+    for(int i=0; i<=batch_size-1; i++){
+        task_user_data_ec_batch[i] = {0};
+        result = doca_buf_set_data(this->ec_src_doca_buf_batch[i], this->ec_src + (k*block_size*i), k*block_size);
+
+        task_user_data_ec_batch[i].ptr = &ec_task_result_batch[i];
+
+        result = doca_ec_task_create_allocate_init(ec_resources.ec_ctx,
+                            this->encoding_matrix,
+                            this->ec_src_doca_buf_batch[i],
+                            this->ec_dst_doca_buf_batch[i],
+                            task_user_data_ec_batch[i],
+                            &ec_task_create_batch[i]);
+
+        this->ec_task_batch[i] = doca_ec_task_create_as_task(ec_task_create_batch[i]);
+    }
+}
+
+void DPUProxy::resetECDestBufBatch(){
+    for(int i=0; i<=ec_batch_size-1; i++)
+	    doca_buf_reset_data_len(ec_dst_doca_buf_batch[i]);
+}
+
+void DPUProxy::submitECTaskBatch(){
+    // submit 
+    gettimeofday(&start_time, 0);
+    for(int i=0; i<=ec_batch_size-1; i++){
+        result = doca_task_submit(ec_task_batch[i]);
+        if (result != DOCA_SUCCESS) {
+            printf("fatal error\n");
+            exit(-1);
+        }
+    }
+
+    ec_resources.num_remaining_tasks = ec_batch_size;
+    ec_resources.run_pe_progress = true;
+    gettimeofday(&end_time, 0);
+    this->ec_batch_process_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
+}
+
+void DPUProxy::waitingECTasksBatch(){
+    gettimeofday(&start_time, 0);
+    while (ec_resources.run_pe_progress) {
+        if (doca_pe_progress(state->pe) == 0)
+            ;
+    }
+    gettimeofday(&end_time, 0);
+    this->ec_batch_process_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
+
+}
+
+void DPUProxy::getECTaskResultBatch(int task_index, char** coding, int block_size){
+    for(int i=0, coding_off=0; i<=this->m-1; i++, coding_off+=block_size)
+        memcpy(coding[i], ec_dst + (coding_off) + (block_size*m*task_index), block_size);
+}
+
+void DPUProxy::encode_chunks(char* input_data, int block_size, int k, int batch_size){
+    resetECDestBufBatch();
+    prepareECBatch(input_data, block_size, k, batch_size);
+    submitECTaskBatch();
+    waitingECTasksBatch();
+}
+
+void DPUProxy::prepareECBatch(char* input_data, int block_size, int k, int batch_size){
+    int data_stripe_size = block_size * k;
+    for(int i=0; i<=batch_size-1; i++){
+        memcpy(ec_src + data_stripe_size*i, 
+                input_data + data_stripe_size*i, 
+                data_stripe_size);
+    }
+}
+
+int DPUProxy::getECBatchProcessTime(){
+    return this->ec_batch_process_time;
+}
+
+
