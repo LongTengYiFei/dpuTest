@@ -560,7 +560,7 @@ doca_error_t allocate_compress_resources(const char *pci_addr, uint32_t max_bufs
 		result = doca_compress_task_compress_deflate_set_conf(resources->compress,
 								      compress_completed_callback,
 								      compress_error_callback,
-								      NUM_COMPRESS_TASKS);
+								      max_bufs/2);
 		break;
 	case COMPRESS_MODE_DECOMPRESS_DEFLATE:
 		result = doca_compress_task_decompress_deflate_set_conf(resources->compress,

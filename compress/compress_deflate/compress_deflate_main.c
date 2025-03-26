@@ -52,14 +52,14 @@ struct compress_deflate_result {
 	uint32_t adler_cs;   /**< The Adler Checksum */
 };
 
-// 全局变量
-int block_size_after_compression;
-unsigned long copy_time_us = 0;
+// stat
 unsigned long doca_compress_time_us = 0;
-unsigned long cpu_decompress_time_us = 0;
+unsigned long doca_decompress_time_us = 0;
 unsigned long cpu_compress_time_us = 0;
+unsigned long cpu_decompress_time_us = 0;
 unsigned long total_size_before_compression = 0;
 unsigned long total_size_after_compression = 0;
+
 struct compress_cfg compress_cfg;
 struct doca_log_backend *sdk_log;
 int block_size;
@@ -67,23 +67,39 @@ char* src_buffer;
 char* read_buffer;
 char* dst_buffer;
 uint64_t max_buf_size, max_output_size;
-uint32_t max_bufs = 2;
+uint32_t max_bufs;
+int blob_size;
+int batch_size;
 struct compress_resources resources = {0};
 struct program_core_objects *state;
+
 struct doca_buf *src_doca_buf;
 struct doca_buf *dst_doca_buf;
-doca_error_t result;
 struct doca_task *task;
 struct doca_compress_task_compress_deflate *compress_task;
-union doca_data task_user_data = {0};
-struct compress_deflate_result task_result = {0};
+union doca_data task_user_data={0};
+struct compress_deflate_result task_result={0};
+
+struct doca_buf **src_doca_buf_batch;
+struct doca_buf **dst_doca_buf_batch;
+struct doca_task **task_batch;
+struct doca_compress_task_compress_deflate **compress_task_batch;
+union doca_data *task_user_data_batch;
+struct compress_deflate_result *task_result_batch;
+
+doca_error_t result;
 struct timespec ts = {
 	.tv_sec = 0,
 	.tv_nsec = SLEEP_IN_NANOS,
 };
+size_t blob_size_after_compression;
 
-doca_error_t initCompressionResources()
-{
+doca_error_t initCompressionResources(int _batch_size, int _blob_size_KB)
+{	
+	batch_size = _batch_size;
+	max_bufs = _batch_size*2;
+	blob_size = _blob_size_KB*1024;
+
 	/* Allocate resources */
 	resources.mode = COMPRESS_MODE_COMPRESS_DEFLATE;
 	result = allocate_compress_resources("b1:00.0", max_bufs, &resources);
@@ -97,26 +113,20 @@ doca_error_t initCompressionResources()
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to query compress max buf size: %s", doca_error_get_descr(result));
 
-	block_size = max_buf_size;
-	src_buffer = (char*)malloc(max_buf_size);
-	read_buffer = (char*)malloc(max_buf_size);
+	if(blob_size > max_buf_size){
+		printf("blob size is too large: %d, the max buf size is: %d\n", blob_size, max_buf_size);
+		exit(-1);
+	}
 
-	// 默认最大2M
-	max_output_size = max_buf_size;
+	src_buffer = (char*)malloc(blob_size*batch_size);
+	dst_buffer = (char*)malloc(blob_size*batch_size);
 
 	/* Start compress context */
 	result = doca_ctx_start(state->ctx);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to start context: %s", doca_error_get_descr(result));
-
-	dst_buffer = calloc(1, max_output_size);
-	if (dst_buffer == NULL) {
-		result = DOCA_ERROR_NO_MEMORY;
-		DOCA_LOG_ERR("Failed to allocate memory: %s", doca_error_get_descr(result));
-	}
 		
-	// 目标就准备2M就行，反复覆盖
-	result = doca_mmap_set_memrange(state->dst_mmap, dst_buffer, max_output_size);
+	result = doca_mmap_set_memrange(state->dst_mmap, dst_buffer, blob_size*batch_size);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
 
@@ -124,8 +134,7 @@ doca_error_t initCompressionResources()
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to start mmap: %s", doca_error_get_descr(result));
 
-	// 源数据
-	result = doca_mmap_set_memrange(state->src_mmap, src_buffer, max_buf_size);
+	result = doca_mmap_set_memrange(state->src_mmap, src_buffer, blob_size*batch_size);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
 
@@ -133,49 +142,32 @@ doca_error_t initCompressionResources()
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to start mmap: %s", doca_error_get_descr(result));
 
-	/* Construct DOCA buffer for each address range */
-	result =
-		doca_buf_inventory_buf_get_by_addr(state->buf_inv, state->src_mmap, src_buffer, max_buf_size, &src_doca_buf);
-	if (result != DOCA_SUCCESS) 
-		DOCA_LOG_ERR("Unable to acquire DOCA buffer representing source buffer: %s",
-			     doca_error_get_descr(result));
-
-	/* Construct DOCA buffer for each address range */
-	result = doca_buf_inventory_buf_get_by_addr(state->buf_inv,
-						    state->dst_mmap,
-						    dst_buffer,
-						    max_buf_size,
-						    &dst_doca_buf);
-	if (result != DOCA_SUCCESS) 
-		DOCA_LOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s",
-			     doca_error_get_descr(result));
-
+	src_doca_buf_batch = (struct doca_buf**)malloc(sizeof(struct doca_buf*)*(batch_size));
+	dst_doca_buf_batch = (struct doca_buf**)malloc(sizeof(struct doca_buf*)*(batch_size));
+	task_batch = (struct doca_task**)malloc(sizeof(struct doca_task*)*(batch_size));
+	compress_task_batch = (struct doca_compress_task_compress_deflate**)malloc(sizeof(struct doca_compress_task_compress_deflate*)*(batch_size));
+	task_user_data_batch = (union doca_data*)malloc(sizeof(union doca_data)*(batch_size));
+	task_result_batch = (struct compress_deflate_result*)malloc(sizeof(struct compress_deflate_result)*(batch_size));
 	// alloc task
-	task_user_data.ptr = &task_result;
-	result = doca_compress_task_compress_deflate_alloc_init(resources.compress,
-								src_doca_buf,
-								dst_doca_buf,
-								task_user_data,
-								&compress_task);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to allocate compress task: %s", doca_error_get_descr(result));
-		return result;
-	}
+	for(int i=0; i<=batch_size-1; i++){
+		memset(&task_user_data_batch[i], 0, sizeof(struct compress_deflate_result));
 
-	task = doca_compress_task_compress_deflate_as_task(compress_task);
+		result = doca_buf_inventory_buf_get_by_addr(state->buf_inv, state->src_mmap, 
+			src_buffer+i*blob_size, blob_size, &src_doca_buf_batch[i]);
+		result = doca_buf_inventory_buf_get_by_addr(state->buf_inv, state->dst_mmap, 
+			dst_buffer+i*blob_size, blob_size, &dst_doca_buf_batch[i]);
 
-	// set 一次就行了，这个地址已经注册过，之后反复read覆盖；
-	result = doca_buf_set_data(src_doca_buf, src_buffer, block_size);
-	if (result != DOCA_SUCCESS){
-		DOCA_LOG_ERR("Unable to set data in the DOCA buffer representing source buffer: %s", doca_error_get_descr(result));
-		return result;
+		task_user_data_batch[i].ptr = &task_result_batch[i];
+		result = doca_compress_task_compress_deflate_alloc_init(resources.compress,
+									src_doca_buf_batch[i],
+									dst_doca_buf_batch[i],
+									task_user_data_batch[i],
+									&compress_task_batch[i]);
+		task_batch[i] = doca_compress_task_compress_deflate_as_task(compress_task_batch[i]);
 	}
 }
 
-/*
-	使用doca压缩文件片段，并计算吞吐量；
-*/
-doca_error_t test1(const char *file_name){
+doca_error_t compressFileDOCA(const char *file_name, int _batch_size, int _blob_size){
 	/*
 		切片读文件，每次读一点到src_buffer中，覆盖原来的数据；
 	*/	
@@ -184,36 +176,34 @@ doca_error_t test1(const char *file_name){
 	struct timeval start_time, end_time;
 	// 没搞懂为啥超过2GB就任务失败
 	for(;;){
-		// read from file
-		int n = read(fd, read_buffer, block_size);
+		int n = read(fd, src_buffer, blob_size*batch_size);
 		total_size_before_compression += n;
 		if(n == 0) break;
 
 		gettimeofday(&start_time, NULL);
-		// copy 
-		memcpy(src_buffer, read_buffer, n);
-		gettimeofday(&end_time, NULL);
-		copy_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+	
+		for(int i=0; i<=batch_size-1; i++){
+			// reset
+			result = doca_buf_reset_data_len(dst_doca_buf_batch[i]);
+			result = doca_buf_set_data(src_doca_buf_batch[i], src_buffer+i*blob_size, blob_size);
 
-		gettimeofday(&start_time, NULL);
-		// reset	
-		doca_buf_reset_data_len(dst_doca_buf);
-		doca_buf_set_data(src_doca_buf, src_buffer, n);
-
-		// Submit 
-		resources.num_remaining_tasks++;
-		result = doca_task_submit(task);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to submit compress task: %s", doca_error_get_descr(result));
-			doca_task_free(task);
-			return result;
-		}
+			// Submit 
+			
+			result = doca_task_submit(task_batch[i]);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to submit compress task: %s", doca_error_get_descr(result));
+				doca_task_free(task_batch[i]);
+				return result;
+			}
+		}	
+		resources.num_remaining_tasks = batch_size;
 		resources.run_pe_progress = true;
 
 		// wait
 		while (resources.run_pe_progress) {
 			if (doca_pe_progress(state->pe) == 0)
-				nanosleep(&ts, &ts);
+				// nanosleep(&ts, &ts);
+				;
 		}
 
 		gettimeofday(&end_time, NULL);
@@ -223,16 +213,17 @@ doca_error_t test1(const char *file_name){
 		if (task_result.status != DOCA_SUCCESS)
 			return task_result.status;
 
-		result = doca_buf_get_data_len(dst_doca_buf, &block_size_after_compression);
-		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Unable to get data length in the DOCA buffer representing destination buffer: %s", doca_error_get_descr(result));
-			return result;
+		for(int i=0; i<=batch_size-1; i++){
+			result = doca_buf_get_data_len(dst_doca_buf_batch[i], &blob_size_after_compression);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Unable to get data length in the DOCA buffer representing destination buffer: %s", doca_error_get_descr(result));
+				return result;
+			}
+			total_size_after_compression += blob_size_after_compression;
 		}
-		total_size_after_compression += block_size_after_compression;
 	}
 
 	close(fd);
-
 	return result;
 }
 
@@ -284,14 +275,7 @@ void test2(const char *file_name){
 }
 
 void printStat(){
-	// printf("copy time ms: %d\n", copy_time_us / 1000);
-	// printf("doca compress time ms: %d\n", doca_compress_time_us / 1000);
-	// printf("compression speed (no copy) %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_compress_time_us / 1000000.0));
-	// printf("compression speed (copy) %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / ((doca_compress_time_us+copy_time_us) / 1000000.0));
-
-	printf("decompress time ms: %d\n", cpu_decompress_time_us / 1000);
-	printf("decompress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (cpu_decompress_time_us / 1000000.0));
-
+	printf("compress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_compress_time_us / 1000000.0));
 	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
 	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
 	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
@@ -299,9 +283,6 @@ void printStat(){
 
 void resetStat(){
 	doca_compress_time_us = 0;
-	cpu_compress_time_us = 0;
-	cpu_decompress_time_us = 0;
-	copy_time_us = 0;
 	total_size_before_compression = 0;
 	total_size_after_compression = 0;
 }
@@ -341,8 +322,7 @@ void traverseDir(const char *base_path) {
         else if (S_ISREG(info.st_mode)) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".log") == 0) {
-                //compressFileDOCA(path);
-				test2(path);
+                compressFileDOCA(path, batch_size, blob_size);
             }
         }
     }
@@ -460,13 +440,11 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	result = doca_argp_start(argc, argv);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to parse sample input: %s", doca_error_get_descr(result));
-		return 0;
+	char* workloads_path = argv[1];
+    if(strcmp(argv[2], "dpuBatch") == 0){
+		int _batch_size = atoi(argv[3]);
+		int _blob_size_KB = atoi(argv[4]);
+		initCompressionResources(_batch_size, _blob_size_KB);
+		traverseDirOneLayer(workloads_path);
 	}
-
-	initBufferCPU();
-	initCompressionResources();
-	traverseDirOneLayer("/home/cyf/ssd1/benchmark_log_files/");
 }
