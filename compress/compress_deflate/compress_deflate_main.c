@@ -59,20 +59,22 @@ unsigned long cpu_compress_time_us = 0;
 unsigned long cpu_decompress_time_us = 0;
 unsigned long total_size_before_compression = 0;
 unsigned long total_size_after_compression = 0;
+unsigned long total_size_after_decompression = 0;
 
-struct compress_cfg compress_cfg;
-struct doca_log_backend *sdk_log;
-int block_size;
-char* src_buffer;
-char* read_buffer;
-char* dst_buffer;
-uint64_t max_buf_size, max_output_size;
+// common
+
 uint32_t max_bufs;
 int blob_size;
 int batch_size;
+struct doca_log_backend *sdk_log;
+struct compress_cfg compress_cfg;
+
+// compress
+uint64_t max_buf_size;
 struct compress_resources resources = {0};
 struct program_core_objects *state;
-
+char* src_buffer;
+char* dst_buffer;
 struct doca_buf *src_doca_buf;
 struct doca_buf *dst_doca_buf;
 struct doca_task *task;
@@ -80,6 +82,8 @@ struct doca_compress_task_compress_deflate *compress_task;
 union doca_data task_user_data={0};
 struct compress_deflate_result task_result={0};
 
+char* src_buffer_decompress;
+char* dst_buffer_decompress;
 struct doca_buf **src_doca_buf_batch;
 struct doca_buf **dst_doca_buf_batch;
 struct doca_task **task_batch;
@@ -87,12 +91,97 @@ struct doca_compress_task_compress_deflate **compress_task_batch;
 union doca_data *task_user_data_batch;
 struct compress_deflate_result *task_result_batch;
 
+// decompress
+uint64_t max_buf_size_decompress;
+struct compress_resources resources_decompress = {0};
+struct program_core_objects *state_decompress;
+struct doca_buf **src_doca_buf_batch_decompress;
+struct doca_buf **dst_doca_buf_batch_decompress;
+struct doca_task **task_batch_decompress;
+struct doca_compress_task_decompress_deflate **compress_task_batch_decompress;
+union doca_data *task_user_data_batch_decompress;
+struct compress_deflate_result *task_result_batch_decompress;
+
 doca_error_t result;
 struct timespec ts = {
 	.tv_sec = 0,
 	.tv_nsec = SLEEP_IN_NANOS,
 };
 size_t blob_size_after_compression;
+size_t blob_size_after_decompression;
+
+doca_error_t initDecompressionResources(int _batch_size, int _blob_size_KB)
+{	
+	batch_size = _batch_size;
+	max_bufs = _batch_size*2;
+	blob_size = _blob_size_KB*1024;
+
+	/* Allocate resources */
+	resources_decompress.mode = COMPRESS_MODE_DECOMPRESS_DEFLATE;
+	result = allocate_compress_resources("b1:00.0", max_bufs, &resources_decompress);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to allocate compress resources: %s", doca_error_get_descr(result));
+		return result;
+	}
+
+	state_decompress = resources_decompress.state;
+	result = doca_compress_cap_task_decompress_deflate_get_max_buf_size(doca_dev_as_devinfo(state_decompress->dev), &max_buf_size_decompress);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to query compress max buf size: %s", doca_error_get_descr(result));
+
+	if(blob_size > max_buf_size_decompress){
+		printf("blob size is too large: %d, the max buf size is: %d\n", blob_size, max_buf_size_decompress);
+		exit(-1);
+	}
+
+	src_buffer_decompress = (char*)malloc(blob_size*batch_size);
+	dst_buffer_decompress = (char*)malloc(blob_size*batch_size);
+
+	/* Start compress context */
+	result = doca_ctx_start(state_decompress->ctx);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to start context: %s", doca_error_get_descr(result));
+		
+	result = doca_mmap_set_memrange(state_decompress->dst_mmap, dst_buffer_decompress, blob_size*batch_size);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
+
+	result = doca_mmap_start(state_decompress->dst_mmap);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to start mmap: %s", doca_error_get_descr(result));
+
+	result = doca_mmap_set_memrange(state_decompress->src_mmap, src_buffer_decompress, blob_size*batch_size);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
+
+	result = doca_mmap_start(state_decompress->src_mmap);
+	if (result != DOCA_SUCCESS) 
+		DOCA_LOG_ERR("Failed to start mmap: %s", doca_error_get_descr(result));
+
+	src_doca_buf_batch_decompress = (struct doca_buf**)malloc(sizeof(struct doca_buf*)*(batch_size));
+	dst_doca_buf_batch_decompress = (struct doca_buf**)malloc(sizeof(struct doca_buf*)*(batch_size));
+	task_batch_decompress = (struct doca_task**)malloc(sizeof(struct doca_task*)*(batch_size));
+	compress_task_batch_decompress = (struct doca_compress_task_decompress_deflate**)malloc(sizeof(struct doca_compress_task_decompress_deflate*)*(batch_size));
+	task_user_data_batch_decompress = (union doca_data*)malloc(sizeof(union doca_data)*(batch_size));
+	task_result_batch_decompress = (struct compress_deflate_result*)malloc(sizeof(struct compress_deflate_result)*(batch_size));
+
+	for(int i=0; i<=batch_size-1; i++){
+		memset(&task_user_data_batch_decompress[i], 0, sizeof(struct compress_deflate_result));
+
+		result = doca_buf_inventory_buf_get_by_addr(state_decompress->buf_inv, state_decompress->src_mmap, 
+			src_buffer_decompress+i*blob_size, blob_size, &src_doca_buf_batch_decompress[i]);
+		result = doca_buf_inventory_buf_get_by_addr(state_decompress->buf_inv, state_decompress->dst_mmap, 
+			dst_buffer_decompress+i*blob_size, blob_size, &dst_doca_buf_batch_decompress[i]);
+
+		task_user_data_batch_decompress[i].ptr = &task_result_batch_decompress[i];
+		result = doca_compress_task_decompress_deflate_alloc_init(resources_decompress.compress,
+									src_doca_buf_batch_decompress[i],
+									dst_doca_buf_batch_decompress[i],
+									task_user_data_batch_decompress[i],
+									&compress_task_batch_decompress[i]);
+		task_batch_decompress[i] = doca_compress_task_decompress_deflate_as_task(compress_task_batch_decompress[i]);
+	}
+}
 
 doca_error_t initCompressionResources(int _batch_size, int _blob_size_KB)
 {	
@@ -148,7 +237,7 @@ doca_error_t initCompressionResources(int _batch_size, int _blob_size_KB)
 	compress_task_batch = (struct doca_compress_task_compress_deflate**)malloc(sizeof(struct doca_compress_task_compress_deflate*)*(batch_size));
 	task_user_data_batch = (union doca_data*)malloc(sizeof(union doca_data)*(batch_size));
 	task_result_batch = (struct compress_deflate_result*)malloc(sizeof(struct compress_deflate_result)*(batch_size));
-	// alloc task
+	
 	for(int i=0; i<=batch_size-1; i++){
 		memset(&task_user_data_batch[i], 0, sizeof(struct compress_deflate_result));
 
@@ -164,6 +253,8 @@ doca_error_t initCompressionResources(int _batch_size, int _blob_size_KB)
 									task_user_data_batch[i],
 									&compress_task_batch[i]);
 		task_batch[i] = doca_compress_task_compress_deflate_as_task(compress_task_batch[i]);
+
+		result = doca_buf_set_data(src_doca_buf_batch[i], src_buffer+i*blob_size, blob_size);
 	}
 }
 
@@ -172,10 +263,15 @@ doca_error_t compressFileDOCA(const char *file_name, int _batch_size, int _blob_
 		切片读文件，每次读一点到src_buffer中，覆盖原来的数据；
 	*/	
 
+	int* compressed_lengths = (int*)malloc(sizeof(int)*_batch_size);
+
 	int fd = open(file_name, O_RDONLY);
 	struct timeval start_time, end_time;
 	// 没搞懂为啥超过2GB就任务失败
 	for(;;){
+		/*
+			compress
+		*/
 		int n = read(fd, src_buffer, blob_size*batch_size);
 		total_size_before_compression += n;
 		if(n == 0) break;
@@ -185,7 +281,6 @@ doca_error_t compressFileDOCA(const char *file_name, int _batch_size, int _blob_
 		for(int i=0; i<=batch_size-1; i++){
 			// reset
 			result = doca_buf_reset_data_len(dst_doca_buf_batch[i]);
-			result = doca_buf_set_data(src_doca_buf_batch[i], src_buffer+i*blob_size, blob_size);
 
 			// Submit 
 			
@@ -220,10 +315,49 @@ doca_error_t compressFileDOCA(const char *file_name, int _batch_size, int _blob_
 				return result;
 			}
 			total_size_after_compression += blob_size_after_compression;
+			compressed_lengths[i] = blob_size_after_compression;
+		}
+
+		/*
+			decompress
+		*/
+		memcpy(src_buffer_decompress, dst_buffer, blob_size*batch_size);
+
+		gettimeofday(&start_time, NULL);
+		for(int i=0; i<=batch_size-1; i++){
+			result = doca_buf_reset_data_len(dst_doca_buf_batch_decompress[i]);
+			result = doca_buf_set_data(src_doca_buf_batch_decompress[i], src_buffer_decompress+i*blob_size, compressed_lengths[i]);
+		
+			result = doca_task_submit(task_batch_decompress[i]);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to submit compress task: %s", doca_error_get_descr(result));
+				doca_task_free(task_batch_decompress[i]);
+				return result;
+			}
+		}
+		resources_decompress.num_remaining_tasks = batch_size;
+		resources_decompress.run_pe_progress = true;
+
+		while (resources_decompress.run_pe_progress) {
+			if (doca_pe_progress(state_decompress->pe) == 0)
+				;
+		}
+
+		gettimeofday(&end_time, NULL);
+		doca_decompress_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+
+		for(int i=0; i<=batch_size-1; i++){
+			result = doca_buf_get_data_len(dst_doca_buf_batch_decompress[i], &blob_size_after_decompression);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Unable to get data length in the DOCA buffer representing destination buffer: %s", doca_error_get_descr(result));
+				return result;
+			}
+			total_size_after_decompression += blob_size_after_decompression;
 		}
 	}
 
 	close(fd);
+	free(compressed_lengths);
 	return result;
 }
 
@@ -276,15 +410,19 @@ void test2(const char *file_name){
 
 void printStat(){
 	printf("compress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_compress_time_us / 1000000.0));
+	printf("decompress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_decompress_time_us / 1000000.0));
 	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
 	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
+	printf("total size after decompression: %.2f MB\n", total_size_after_decompression / 1024.0 / 1024.0);
 	printf("compress ratio: %.2f%%\n", (1 - (float)total_size_after_compression / (float)total_size_before_compression)*100);
 }
 
 void resetStat(){
 	doca_compress_time_us = 0;
+	doca_decompress_time_us = 0;
 	total_size_before_compression = 0;
 	total_size_after_compression = 0;
+	total_size_after_decompression = 0;
 }
 
 void traverseDir(const char *base_path) {
@@ -422,11 +560,11 @@ int main(int argc, char **argv)
 		return 0;
 	}
 		
-	result = doca_argp_init("doca_compress_deflate", &compress_cfg);
-	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("ERROR: %s", doca_error_get_descr(result));
-		return 0;
-	}
+	// result = doca_argp_init("doca_compress_deflate", &compress_cfg);
+	// if (result != DOCA_SUCCESS) {
+	// 	DOCA_LOG_ERR("ERROR: %s", doca_error_get_descr(result));
+	// 	return 0;
+	// }
 
 	result = register_compress_params();
 	if (result != DOCA_SUCCESS) {
@@ -444,6 +582,7 @@ int main(int argc, char **argv)
     if(strcmp(argv[2], "dpuBatch") == 0){
 		int _batch_size = atoi(argv[3]);
 		int _blob_size_KB = atoi(argv[4]);
+		initDecompressionResources(_batch_size, _blob_size_KB);
 		initCompressionResources(_batch_size, _blob_size_KB);
 		traverseDirOneLayer(workloads_path);
 	}
