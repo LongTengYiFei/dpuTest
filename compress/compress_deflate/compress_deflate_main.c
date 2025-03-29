@@ -361,7 +361,7 @@ doca_error_t compressFileDOCA(const char *file_name, int _batch_size, int _blob_
 	return result;
 }
 
-char* cpu_dst_buffer_compress = NULL;
+char** cpu_dst_buffer_compress = NULL;
 char* cpu_src_buffer_compress = NULL;
 char* cpu_dst_buffer_decompress = NULL;
 unsigned long cpu_dst_len_compress;
@@ -371,11 +371,89 @@ int cpu_decompress_dst_buffer_size = 8*1024*1024;
 int cpu_compress_dst_buffer_size = 4*1024*1024;
 int cpu_read_block_size = 2*1024*1024;
 
-void initBufferCPU(){
+#define MB (1024*1024)
+void initBufferCPU(int _batch_size, int _blob_size){
 	cpu_dst_buffer_decompress = malloc(cpu_decompress_dst_buffer_size);
-	cpu_dst_buffer_compress = malloc(cpu_compress_dst_buffer_size);
-	cpu_src_buffer_compress = malloc(cpu_read_block_size);
-}	
+	cpu_dst_buffer_compress = malloc(sizeof(char*)*_batch_size);
+	for(int i=0; i<=_batch_size-1;i++){
+		cpu_dst_buffer_compress[i] = malloc(2*_blob_size);
+	} 
+	cpu_src_buffer_compress = malloc(_batch_size*_blob_size);
+}
+
+doca_error_t test3(const char *file_name, int _batch_size, int _blob_size){
+	/*
+		compress by CPU then decomprss by doca
+	*/
+
+	uLong* compressed_lengths = (uLong*)malloc(sizeof(uLong)*_batch_size);
+
+	int fd = open(file_name, O_RDONLY);
+	struct timeval start_time, end_time;
+	// 没搞懂为啥超过2GB就任务失败
+	for(;;){
+		/*
+			cpu compress
+		*/
+		memset(cpu_src_buffer_compress, 0, _batch_size*_blob_size);
+		int n = read(fd, cpu_src_buffer_compress, _blob_size*_batch_size);
+		total_size_before_compression += n;
+		if(n == 0) break;
+		
+		uLong ul_blob_size = _blob_size;
+		for(int i=0; i<=_batch_size-1; i++){
+			uLong cpu_compressed_length = 2*_blob_size;
+			int comp_ret = compress(cpu_dst_buffer_compress[i], &cpu_compressed_length, cpu_src_buffer_compress+i*_blob_size, ul_blob_size);
+			total_size_after_compression += cpu_compressed_length;
+			compressed_lengths[i] = cpu_compressed_length;
+		}
+
+		/*
+			doca decompress
+		*/
+		for(int i=0; i<=_batch_size-1;i++)
+			memcpy(src_buffer_decompress+i*_blob_size, cpu_dst_buffer_compress[i], blob_size);
+
+		gettimeofday(&start_time, NULL);
+		for(int i=0; i<=batch_size-1; i++){
+			result = doca_buf_reset_data_len(dst_doca_buf_batch_decompress[i]);
+			// result = doca_buf_set_data(src_doca_buf_batch_decompress[i], src_buffer_decompress+i*blob_size+, compressed_lengths[i]);
+			result = doca_buf_set_data(src_doca_buf_batch_decompress[i], 
+							src_buffer_decompress+i*_blob_size+ZLIB_HEADER_SIZE, 
+							compressed_lengths[i]-ZLIB_COMPATIBILITY_ADDITIONAL_MEMORY);
+
+			result = doca_task_submit(task_batch_decompress[i]);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Failed to submit compress task: %s", doca_error_get_descr(result));
+				doca_task_free(task_batch_decompress[i]);
+				return result;
+			}
+		}
+		resources_decompress.num_remaining_tasks = batch_size;
+		resources_decompress.run_pe_progress = true;
+
+		while (resources_decompress.run_pe_progress) {
+			if (doca_pe_progress(state_decompress->pe) == 0)
+				;
+		}
+
+		gettimeofday(&end_time, NULL);
+		doca_decompress_time_us += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
+
+		for(int i=0; i<=batch_size-1; i++){
+			result = doca_buf_get_data_len(dst_doca_buf_batch_decompress[i], &blob_size_after_decompression);
+			if (result != DOCA_SUCCESS) {
+				DOCA_LOG_ERR("Unable to get data length in the DOCA buffer representing destination buffer: %s", doca_error_get_descr(result));
+				return result;
+			}
+			total_size_after_decompression += blob_size_after_decompression;
+		}
+	}
+
+	close(fd);
+	free(compressed_lengths);
+	return result;
+}
 
 /*
 	使用cpu压缩文件片段，然后再解压文件片段，并计算吞吐量；
@@ -460,7 +538,8 @@ void traverseDir(const char *base_path) {
         else if (S_ISREG(info.st_mode)) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".log") == 0) {
-                compressFileDOCA(path, batch_size, blob_size);
+				test3(path, batch_size, blob_size);
+                // compressFileDOCA(path, batch_size, blob_size);
             }
         }
     }
@@ -559,12 +638,12 @@ int main(int argc, char **argv)
 		DOCA_LOG_ERR("ERROR: %s", doca_error_get_descr(result));
 		return 0;
 	}
-		
-	// result = doca_argp_init("doca_compress_deflate", &compress_cfg);
-	// if (result != DOCA_SUCCESS) {
-	// 	DOCA_LOG_ERR("ERROR: %s", doca_error_get_descr(result));
-	// 	return 0;
-	// }
+
+	result = doca_argp_init("doca_decompress_deflate", &compress_cfg);
+	if (result != DOCA_SUCCESS) {
+		DOCA_LOG_ERR("Failed to init ARGP resources: %s", doca_error_get_descr(result));
+		return 0;
+	}
 
 	result = register_compress_params();
 	if (result != DOCA_SUCCESS) {
@@ -582,8 +661,9 @@ int main(int argc, char **argv)
     if(strcmp(argv[2], "dpuBatch") == 0){
 		int _batch_size = atoi(argv[3]);
 		int _blob_size_KB = atoi(argv[4]);
+		initBufferCPU(_batch_size, _blob_size_KB*1024);
 		initDecompressionResources(_batch_size, _blob_size_KB);
-		initCompressionResources(_batch_size, _blob_size_KB);
+		// initCompressionResources(_batch_size, _blob_size_KB);
 		traverseDirOneLayer(workloads_path);
 	}
 }
