@@ -416,11 +416,11 @@ int main(int argc, char **argv)
 		DOCA_LOG_ERR("Self path is too long, max %d", USER_MAX_PATH_NAME);
 		goto sample_exit;
 	}
-	strcpy(ec_cfg.pci_address, "4b:00.0");
+	strcpy(ec_cfg.pci_address, "b1:00.0");
 	strncpy(ec_cfg.input_path, "./testInput", USER_MAX_PATH_NAME);
 	strcpy(ec_cfg.output_path, "./testOutput");
 	ec_cfg.do_both = false; /* do both encoding & decoding (and delete data block between them) */
-	ec_cfg.matrix_type = DOCA_EC_MATRIX_TYPE_VANDERMONDE;
+	ec_cfg.matrix_type = DOCA_EC_MATRIX_TYPE_CAUCHY;
 	ec_cfg.data_block_count = 4; /* data block count */
 	ec_cfg.rdnc_block_count = 2; /* redundancy block count */
 	ec_cfg.delete_block_indices[0] = 0;

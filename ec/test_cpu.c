@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "./Jerasure/include/jerasure.h"
-#include "./Jerasure/include/reed_sol.h"
-#include "./Jerasure/include/cauchy.h"
-
+#include <jerasure.h>
+#include <jerasure/reed_sol.h>
+#include <jerasure/cauchy.h>
+#include <fcntl.h>
 #include <sys/time.h>
 #include <unistd.h>
-#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
 
 #define K 4 // 数据块数量
 #define M 2 // 校验块数量
@@ -15,13 +17,16 @@
 
 int main() {
 
-    size_t data_size = 1024 * 1024 * 4; 
-    char *data = (char *)malloc(data_size);
+    size_t data_size = 1024 * 1024 * 64; 
+    void* data;
+    size_t alignment = 4096; // 通常为文件系统的块大小
+    size_t buffer_size = data_size;
+    int ret = posix_memalign(&data, alignment, buffer_size);
     int fd = open("./testInput", O_RDONLY);
     read(fd, data, data_size);
 
     // 每个块的大小
-    size_t block_size = data_size / K;
+    size_t block_size = 1024*1024;
 
     // 分配数据块和校验块
     char **data_blocks = (char **)malloc(K * sizeof(char *));
@@ -51,47 +56,28 @@ int main() {
                      end_time.tv_usec - start_time.tv_usec;
     printf("matrix encoding time %d us\n", time_cost_encoding);
 
-    printf("编码完成:生成%d个数据块和%d个校验块\n", K, M);
-    printf("data block\n");
-    for(int i=0; i<=K-1; i++){
-        // printf("数据块 %d 内容:\n", i);
-        for(int j=0; j<=10;j++)
-            printf("%d ", data_blocks[i][j]);
-        printf("\n");
-    }
-    printf("pariry block \n");
-    for(int i=0; i<=M-1; i++){
-        // printf("校验块 %d 内容:\n", i);
-        for(int j=0; j<=10;j++)
-            printf("%d ", coding_blocks[i][j]);
-        printf("\n");
-    }
+    // 恢复测试
+    // data   0 1 2 3 
+    // parity 4 5
+    int erasures[] = {4, -1};
+    memset(coding_blocks[0], 0, block_size); 
 
-    // // 恢复测试
-    // // data   0 1 2 3 
-    // // parity 4 5
-    // int erasures[] = {3, 4, -1}; 
-    // memset(data_blocks[3], 0, block_size); 
-    // memset(coding_blocks[0], 0, block_size); 
+    // 解码恢复数据
+    gettimeofday(&start_time, 0);
+    jerasure_matrix_decode(K, M, W, matrix_RSvandermode, 1, erasures, data_blocks, coding_blocks, block_size);
+    gettimeofday(&end_time, 0);
+    int time_cost_decoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                     end_time.tv_usec - start_time.tv_usec;
+    printf("matrix decoding time %d us\n", time_cost_decoding);
 
-    // // 解码恢复数据
-    // jerasure_matrix_decode(K, M, W, matrix_RSvandermode, 1, erasures, data_blocks, coding_blocks, block_size);
-    // printf("数据恢复,数据块3内容:\n");
-    // for(int i=0; i<=10;i++)
-    //     printf("%d ", data_blocks[3][i]);
-    // printf("\n");
-    // printf("数据恢复,校验块0内容:\n");
-    // for(int i=0; i<=10;i++)
-    //     printf("%d ", coding_blocks[0][i]);
-    // printf("\n");
-
-    // // 释放内存
-    // free(data);
-    // for (int i = 0; i < K; i++) free(data_blocks[i]);
-    // for (int i = 0; i < M; i++) free(coding_blocks[i]);
-    // free(data_blocks);
-    // free(coding_blocks);
-    // free(matrix_RSvandermode);
+    // write to file
+    int fd2 = open("/home/cyf/ssd/testOutput", O_CREAT | O_RDWR | __O_DIRECT , 0777);
+    gettimeofday(&start_time, 0);
+    int n = write(fd2, data, block_size);
+    gettimeofday(&end_time, 0);
+    int time_cost_write = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                     end_time.tv_usec - start_time.tv_usec;
+    printf("matrix write time %d us\n", time_cost_write);
 
     return 0;
 }
