@@ -10,6 +10,11 @@
  * provided with the software product.
  *
  */
+#define _POSIX_C_SOURCE 199309L
+#include <time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -350,57 +355,10 @@ static void ec_create_completed_callback(struct doca_ec_task_create *create_task
 					 union doca_data task_user_data,
 					 union doca_data ctx_user_data)
 {
-	int ret;
-	size_t i;
-	uint8_t *resp_data;
-	doca_error_t result;
-	char full_path[MAX_PATH_NAME];
-	struct create_task_data *task_data = task_user_data.ptr;
-	struct ec_sample_objects *state = ctx_user_data.ptr;
-
-	*task_data->task_status = DOCA_SUCCESS;
-
-	// /* Write the result to output file */
-	// result = doca_buf_get_data(task_data->rdnc_blocks, (void **)&resp_data);
-	// CB_ASSERT(result == DOCA_SUCCESS,
-	// 	  result,
-	// 	  task_data->cb_result,
-	// 	  "Unable to retrieve data pointer from redundancy data blocks buffer");
-
-	// for (i = 0; i < task_data->rdnc_block_count; i++) {
-	// 	ret = snprintf(full_path,
-	// 		       sizeof(full_path),
-	// 		       "%s/%s%ld",
-	// 		       task_data->output_dir_path,
-	// 		       RDNC_BLOCK_FILE_NAME,
-	// 		       i);
-	// 	CB_ASSERT(ret >= 0 && ret < (int)sizeof(full_path),
-	// 		  DOCA_ERROR_IO_FAILED,
-	// 		  task_data->cb_result,
-	// 		  "Path exceeded max path len");
-	// 	state->block_file = fopen(full_path, "wr");
-	// 	CB_ASSERT(state->block_file != NULL,
-	// 		  DOCA_ERROR_IO_FAILED,
-	// 		  task_data->cb_result,
-	// 		  "Unable to open output file: %s",
-	// 		  full_path);
-	// 	ret = fwrite(resp_data + i * task_data->block_size, task_data->block_size, 1, state->block_file);
-	// 	CB_ASSERT(ret >= 0, DOCA_ERROR_IO_FAILED, task_data->cb_result, "Failed to write to file");
-	// 	fclose(state->block_file);
-	// 	state->block_file = NULL;
-	// }
-
-	//DOCA_LOG_INFO("File was encoded successfully and saved in: %s", task_data->output_dir_path);
-
-	*task_data->cb_result = DOCA_SUCCESS;
-
-free_task:
-	/* Free task */
-	// doca_task_free(doca_ec_task_create_as_task(create_task));
-
-	// /* Stop context once task is completed */
-	// (void)doca_ctx_stop(state->core_state.ctx);
-	state->run_pe_progress = false;
+	struct ec_sample_objects *state = (struct ec_sample_objects *)ctx_user_data.ptr;
+    --state->num_remaining_tasks;
+    if(state->num_remaining_tasks == 0)
+	    state->run_pe_progress = false;
 }
 
 /*
@@ -414,84 +372,113 @@ free_task:
  * @rdnc_block_count [in]: redundancy block count
  * @return: DOCA_SUCCESS on success, DOCA_ERROR otherwise.
  */
-doca_error_t ec_encode(const char *pci_addr,
-		       const char *file_path,
-		       enum doca_ec_matrix_type matrix_type,
-		       const char *output_dir_path,
-		       uint32_t data_block_count,
-		       uint32_t rdnc_block_count)
+doca_error_t ec_encode()
 {
 	uint32_t max_bufs = 2;
 	doca_error_t result;
-	int ret;
-	size_t i;
-	size_t file_size;
 	uint64_t max_block_size;
 	uint64_t block_size;
 	uint64_t src_size;
 	uint64_t dst_size;
 	struct ec_sample_objects state_object = {0};
 	struct ec_sample_objects *state = &state_object;
-	char full_path[MAX_PATH_NAME];
 
 	struct timespec ts = {
 		.tv_sec = 0,
 		.tv_nsec = SLEEP_IN_NANOS,
 	};
 
-	doca_error_t task_status = DOCA_SUCCESS;
+	doca_error_t task_result = DOCA_SUCCESS;
 	doca_error_t callback_result = DOCA_SUCCESS;
 	struct doca_task *doca_task;
 	struct doca_ec_task_create *task;
 	struct create_task_data task_data;
-	union doca_data user_data;
+
+	int data_block_count = 8;
+	int rdnc_block_count = 4;
+	struct doca_buf **src_doca_bufs;		/* Source doca buffer as input for the task */
+	// 即使是一个stripe也离散开，不放在一起
+	src_doca_bufs = (struct doca_buf **)malloc(data_block_count*sizeof(struct doca_buf*));
 
 	block_size = 1024*1024;
+	int file_size = 64*1024*1024;
+	int align_size = 64*1024;
 	src_size = (uint64_t)block_size * data_block_count;
 	dst_size = (uint64_t)block_size * rdnc_block_count;
+	char* pci_addr = "b1:00.0";
 
-	posix_memalign(&state->src_buffer, 64*1024, src_size);
+	posix_memalign(&state->src_buffer, align_size, src_size);
 	int fd_data = open("./testInput", O_RDONLY);
 	read(fd_data, state->src_buffer, src_size);
 
-	posix_memalign(&state->dst_buffer, 64*1024, dst_size);
+	posix_memalign(&state->dst_buffer, align_size, dst_size);
 	SAMPLE_ASSERT(state->dst_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate dst_buffer string");
 
-	result = ec_core_init(state,
-			      pci_addr,
-			      (tasks_check)&doca_ec_cap_task_create_is_supported,
-			      max_bufs,
-			      src_size,
-			      dst_size,
-			      &max_block_size);
-	if (result != DOCA_SUCCESS)
-		return result;
+	union doca_data task_user_data;
+	union doca_data ctx_user_data;
 
-	/* Set task configuration */
+	result = open_doca_device_with_pci(pci_addr, (tasks_check)&doca_ec_cap_task_create_is_supported, &state->core_state.dev);
+	ASSERT_DOCA_ERR(result, state, "Unable to open the pci device");
+
+	result = create_core_objects(&state->core_state, data_block_count+1);
+	ASSERT_DOCA_ERR(result, state, "Failed to init core");
+
+	result = doca_ec_create(state->core_state.dev, &state->ec);
+	ASSERT_DOCA_ERR(result, state, "Unable to create ec engine");
+
+	result = doca_ec_cap_get_max_block_size(doca_dev_as_devinfo(state->core_state.dev), &max_block_size);
+	ASSERT_DOCA_ERR(result, state, "Unable to query maximum block size supported");
+
+	state->core_state.ctx = doca_ec_as_ctx(state->ec);
+	SAMPLE_ASSERT(state->core_state.ctx != NULL, DOCA_ERROR_UNEXPECTED, state, "Unable to retrieve ctx");
+
+	result = doca_pe_connect_ctx(state->core_state.pe, state->core_state.ctx);
+	ASSERT_DOCA_ERR(result, state, "Unable to connect context to progress engine");
+
+	result = doca_mmap_set_memrange(state->core_state.dst_mmap, state->dst_buffer, dst_size);
+	ASSERT_DOCA_ERR(result, state, "Failed to set mmap mem range dst");
+
+	result = doca_mmap_start(state->core_state.dst_mmap);
+	ASSERT_DOCA_ERR(result, state, "Failed to start mmap dst");
+
+	result = doca_mmap_set_memrange(state->core_state.src_mmap, state->src_buffer, src_size);
+	ASSERT_DOCA_ERR(result, state, "Failed to set mmap mem range src");
+
+	result = doca_mmap_start(state->core_state.src_mmap);
+	ASSERT_DOCA_ERR(result, state, "Failed to start mmap src");
+
+	for(int i=0; i<=data_block_count-1; i++){
+		result = doca_buf_inventory_buf_get_by_addr(state->core_state.buf_inv,
+								state->core_state.src_mmap,
+								state->src_buffer+i*block_size,
+								block_size,
+								&src_doca_bufs[i]);
+
+		// 每个block分别set
+		result = doca_buf_set_data(src_doca_bufs[i], state->src_buffer+i*block_size, block_size);
+	}
+
+	result = doca_buf_inventory_buf_get_by_addr(state->core_state.buf_inv,
+							state->core_state.dst_mmap,
+							state->dst_buffer,
+							dst_size,
+							&state->dst_doca_buf);
+
+	for (int i = 1; i<=data_block_count-1; i++) {
+		result = doca_buf_chain_list(src_doca_bufs[0], src_doca_bufs[i]);
+	}
+
+	ctx_user_data.ptr = state;
+	result = doca_ctx_set_user_data(state->core_state.ctx, ctx_user_data);
+
+	result = doca_ctx_set_state_changed_cb(state->core_state.ctx, ec_state_changed_callback);
+
 	result = doca_ec_task_create_set_conf(state->ec,
 					      ec_create_completed_callback,
 					      ec_create_error_callback,
 					      1);
 
-	ASSERT_DOCA_ERR(result, state, "Unable to set configuration for create tasks");
-
-	/* Start the task */
 	result = doca_ctx_start(state->core_state.ctx);
-	ASSERT_DOCA_ERR(result, state, "Unable to start context");
-
-	// jerasure给的矩阵不能直接用，得转置一下，而且还得是uint8；
-	// int* tmp = reed_sol_vandermonde_coding_matrix(data_block_count,rdnc_block_count,8);
-	// uint8_t* vandermonde_matrix = malloc(sizeof(uint8_t)*data_block_count*rdnc_block_count);
-	// for(int i=0; i<=rdnc_block_count-1; i++){
-	// 	for(int j=0; j<=data_block_count-1; j++){
-	// 		vandermonde_matrix[i +j*rdnc_block_count] = tmp[i*data_block_count +j];
-	// 	}
-	// }
-	// result = doca_ec_matrix_create_from_raw(state->ec,
-	// 			       vandermonde_matrix,
-	// 			       data_block_count,
-	// 			       rdnc_block_count,
-	// 			       &state->encoding_matrix);
 
 	result = doca_ec_matrix_create(state->ec,
 				       DOCA_EC_MATRIX_TYPE_CAUCHY,
@@ -509,21 +496,13 @@ doca_error_t ec_encode(const char *pci_addr,
 		block_size,
 		max_block_size);
 
-	/* Include all necessary parameters for completion callback in user data of task */
-	task_data = (struct create_task_data){.output_dir_path = output_dir_path,
-					      .block_size = block_size,
-					      .rdnc_block_count = rdnc_block_count,
-					      .rdnc_blocks = state->dst_doca_buf,
-					      .task_status = &task_status,
-					      .cb_result = &callback_result};
-	user_data.ptr = &task_data;
+	task_user_data.ptr = &task_result;
 
-	/* Construct EC create task */
 	result = doca_ec_task_create_allocate_init(state->ec,
 						   state->encoding_matrix,
-						   state->src_doca_buf,
+						   src_doca_bufs[0],
 						   state->dst_doca_buf,
-						   user_data,
+						   task_user_data,
 						   &task);
 	ASSERT_DOCA_ERR(result, state, "Unable to allocate and initiate task");
 
@@ -532,38 +511,34 @@ doca_error_t ec_encode(const char *pci_addr,
 
 	struct timeval start_time, end_time;
 	gettimeofday(&start_time, 0);
-	/* Enqueue ec create task */
+
 	result = doca_task_submit(doca_task);
 	ASSERT_DOCA_ERR(result, state, "Unable to submit task");
 
 	state->run_pe_progress = true;
-
-	/* Wait for create task completion and for context to return to idle */
+	state->num_remaining_tasks = 1;
 	while (state->run_pe_progress) {
 		if (doca_pe_progress(state->core_state.pe) == 0)
-			//nanosleep(&ts, &ts);
-			;
+			nanosleep(&ts, &ts);
 	}
 	gettimeofday(&end_time, 0);
 	int time_cost_encoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 	printf("encoding time %d us\n", time_cost_encoding);
 
-	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
-
 	int len;
 	doca_buf_get_data_len(state->dst_doca_buf, &len);
 	printf("dst len %d\n", len);
-	
+	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
+		
 	// write parity block
-	int fd1 = open("./parity0", O_RDWR | O_CREAT);
-	write(fd1, state->dst_buffer, block_size);
-	close(fd1);
-
-	int fd2 = open("./parity1", O_RDWR | O_CREAT);
-	write(fd2, state->dst_buffer + 1*block_size, block_size);
-	close(fd2);
-
+	for(int i=0; i<=rdnc_block_count-1; i++){
+		char* file_name = (char*)malloc(20);
+		sprintf(file_name, "./parity%d", i);
+		int fd = open(file_name, O_RDWR | O_CREAT , 0666);
+		write(fd, state->dst_buffer+i*block_size, block_size);
+		close(fd);
+	}
 	return callback_result;
 }
 
@@ -613,20 +588,6 @@ static void ec_recover_completed_callback(struct doca_ec_task_recover *recover_t
 					  union doca_data task_user_data,
 					  union doca_data ctx_user_data)
 {
-	// int ret;
-	// size_t i;
-	// doca_error_t result;
-	// uint8_t *resp_data;
-	// char full_path[MAX_PATH_NAME];
-	// size_t block_file_size = 0, remaining_file_size;
-	// struct recover_task_data *task_data = task_user_data.ptr;
-
-	// *task_data->task_status = DOCA_SUCCESS;
-	// *task_data->cb_result = DOCA_SUCCESS;
-	
-	// doca_error_t *result = (doca_error_t *)task_user_data.ptr;
-    // *result = DOCA_SUCCESS;
-
 	struct ec_sample_objects *state = (struct ec_sample_objects *)ctx_user_data.ptr;
     --state->num_remaining_tasks;
     if(state->num_remaining_tasks == 0)
@@ -644,12 +605,7 @@ static void ec_recover_completed_callback(struct doca_ec_task_recover *recover_t
  * @rdnc_block_count [in]: redundancy block count
  * @return: DOCA_SUCCESS on success, DOCA_ERROR otherwise.
  */
-doca_error_t ec_decode(const char *pci_addr,
-		       enum doca_ec_matrix_type matrix_type,
-		       const char *user_output_file_path,
-		       const char *dir_path,
-		       uint32_t data_block_count,
-		       uint32_t rdnc_block_count)
+doca_error_t ec_decode()
 {
 	uint32_t max_bufs = 2;
 	doca_error_t result;
@@ -663,10 +619,7 @@ doca_error_t ec_decode(const char *pci_addr,
 	struct ec_sample_objects state_object = {0};
 	struct ec_sample_objects *state = &state_object;
 	
-	char *end;
 	int64_t file_size;
-	char output_file_path[MAX_PATH_NAME];
-	char full_path[MAX_PATH_NAME];
 	struct timespec ts = {
 		.tv_sec = 0,
 		.tv_nsec = SLEEP_IN_NANOS,
@@ -678,29 +631,64 @@ doca_error_t ec_decode(const char *pci_addr,
 	struct recover_task_data task_data;
 	union doca_data user_data;
 
+	char* pci_addr = "b1:00.0";
+
 	#define MB (1024*1024)
 	uint64_t block_size = MB;
-	size_t n_missing = 2;
-	uint64_t src_size = block_size * 4;
-	uint64_t dst_size = block_size * 2;
-	state->missing_indices = (uint32_t*)malloc((2)*sizeof(uint32_t));
-	//数据块 0 1 2 3
-	//校验块 4 5
+
+	size_t n_missing = 4;
+	int data_block_count = 8;
+	int rdnc_block_count = 4;
+	uint64_t src_size = block_size * data_block_count;
+	uint64_t dst_size = block_size * rdnc_block_count;
+	state->missing_indices = (uint32_t*)malloc((4)*sizeof(uint32_t));
+
+	int align_size = 64*1024;
+
+	//数据块 0 1 2 3 4 5 6 7
+	//校验块 8 9 10 11
 	state->missing_indices[0] = 0;
-	state->missing_indices[1] = 4;
+	state->missing_indices[1] = 1;
+	state->missing_indices[2] = 8;
+	state->missing_indices[3] = 9;
+
+	char* test_src = malloc(12*MB);
+	char* test_dest = malloc(12*MB);
+	struct timeval start_time, end_time;
+	for(int i=0;i<12;i++){
+		memcpy(test_src+i*MB, test_dest+i*MB, MB);
+	}
+	gettimeofday(&start_time, 0);
+	for(int i=0;i<12;i++){
+		memcpy(test_src+i*MB, test_dest+i*MB, MB);
+	}
+	gettimeofday(&end_time, 0);
+	int time_copy = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
+	printf("copy time %d us\n", time_copy);
 
 	// 准备源数据
-	posix_memalign(&state->src_buffer, 64*1024, src_size);
+	posix_memalign(&state->src_buffer, align_size, src_size);
 
 	int fd_data = open("./testInput", O_RDONLY);
-	lseek(fd_data, 1*block_size, SEEK_SET);
-	int n = read(fd_data, state->src_buffer, 3*block_size);
+	lseek(fd_data, 2*block_size, SEEK_SET);
+	int n = read(fd_data, state->src_buffer, 6*block_size);
+
+	int fd_parity0 = open("./parity0", O_RDONLY);
+	n = read(fd_parity0, state->src_buffer + 6*block_size, 1*block_size);
 
 	int fd_parity1 = open("./parity1", O_RDONLY);
-	n = read(fd_parity1, state->src_buffer + 3*block_size, 1*block_size);
+	n = read(fd_parity1, state->src_buffer + 7*block_size, 1*block_size);
+
+	// int fd_parity2 = open("./parity2", O_RDONLY);
+	// n = read(fd_parity2, state->src_buffer + 6*block_size, 1*block_size);
+
+	// int fd_parity3 = open("./parity3", O_RDONLY);
+	// n = read(fd_parity3, state->src_buffer + 7*block_size, 1*block_size);
 
 	// 分配目标数据空间
-	posix_memalign(&state->dst_buffer, 64*1024, dst_size);
+	posix_memalign(&state->dst_buffer, align_size, dst_size);
+	memset(state->dst_buffer, 0, dst_size);
 
 	result = ec_core_init(state,
 			      pci_addr,
@@ -738,8 +726,8 @@ doca_error_t ec_decode(const char *pci_addr,
 	ASSERT_DOCA_ERR(result, state, "Unable to create recovery matrix");
 
 	/* Include all necessary parameters for completion callback in user data of task */
-	task_data = (struct recover_task_data){.dir_path = dir_path,
-					       .output_file_path = output_file_path,
+	task_data = (struct recover_task_data){.dir_path = "dir_path",
+					       .output_file_path = "output_file_path",
 					       .file_size = file_size,
 					       .block_size = block_size,
 					       .data_block_count = data_block_count,
@@ -762,17 +750,20 @@ doca_error_t ec_decode(const char *pci_addr,
 	SAMPLE_ASSERT(doca_task != NULL, DOCA_ERROR_UNEXPECTED, state, "Unable to retrieve task as doca_task");
 
 	/* Enqueue ec recover task */
-	struct timeval start_time, end_time;
+
 	gettimeofday(&start_time, 0);
+
 	result = doca_task_submit(doca_task);
-	ASSERT_DOCA_ERR(result, state, "Unable to submit task");
+	// ASSERT_DOCA_ERR(result, state, "Unable to submit task");
 
 	state->run_pe_progress = true;
+	state->num_remaining_tasks = 1;
 
 	/* Wait for recover task completion and for context to return to idle */
 	while (state->run_pe_progress) {
 		if (doca_pe_progress(state->core_state.pe) == 0)
-			nanosleep(&ts, &ts);
+		;
+			// nanosleep(&ts, &ts);
 	}
 	gettimeofday(&end_time, 0);
 	int time_cost_decoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
@@ -783,46 +774,43 @@ doca_error_t ec_decode(const char *pci_addr,
 	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
 	int len;
 	doca_buf_get_data_len(state->dst_doca_buf, &len);
-	printf("dst len %d\n", len);
+	printf("recover dst len %d\n", len);
 
-	// write parity block
-	int fd_recover0 = open("./recoverBlock0", O_RDWR | O_CREAT);
-	write(fd_recover0, state->dst_buffer, block_size);
-	close(fd_recover0);
-
-	int fd_recover1 = open("./recoverBlock1", O_RDWR | O_CREAT);
-	write(fd_recover1, state->dst_buffer+block_size, block_size);
-	close(fd_recover1);
+	//write parity block
+	for(int i=0; i<n_missing; i++){
+		char* file_name = (char*)malloc(20);
+		sprintf(file_name, "./recoverBlock%d", i);
+		int fd_recover = open(file_name, O_RDWR | O_CREAT, 0666);
+		write(fd_recover, state->dst_buffer+i*block_size, block_size);
+		close(fd_recover);
+	}
 
 	printf("recover over\n");
 	return callback_result;
 }
 
-doca_error_t ec_decode_batch(const char *pci_addr,
-		       enum doca_ec_matrix_type matrix_type,
-		       const char *user_output_file_path,
-		       const char *dir_path,
-		       uint32_t data_block_count,
-		       uint32_t rdnc_block_count)
+
+double get_time_sec() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+doca_error_t ec_decode_batch()
 {
 	uint32_t max_bufs = 2;
 	doca_error_t result;
-	int ret;
-	size_t i;
-	uint64_t max_block_size;
-	size_t block_file_size;
-	uint32_t str_len;
 	struct ec_sample_objects state_object = {0};
 	struct ec_sample_objects *state = &state_object;
+
+	struct ec_sample_objects state_object_encode = {0};
+	struct ec_sample_objects *state_encode = &state_object_encode;
 	
-	char *end;
-	int64_t file_size;
-	char output_file_path[MAX_PATH_NAME];
-	char full_path[MAX_PATH_NAME];
 	struct timespec ts = {
 		.tv_sec = 0,
 		.tv_nsec = SLEEP_IN_NANOS,
 	};
+
 	doca_error_t task_status = DOCA_SUCCESS;
 	doca_error_t callback_result = DOCA_SUCCESS;
 	struct doca_ec_task_recover *task;
@@ -830,67 +818,109 @@ doca_error_t ec_decode_batch(const char *pci_addr,
 
 	#define MB (1024*1024)
 	uint64_t block_size = MB;
-	size_t n_missing = 2;
-	int batch_size = 8;
-	int src_size_seg = 4*block_size;
-	int dst_size_seg = 2*block_size;
+	size_t n_missing = 4;
+	int batch_size = 64;
+	int data_block_count = 8;
+	int rdnc_block_count = 4;
+	int src_size_seg = data_block_count * block_size;
+	int dst_size_seg = rdnc_block_count * block_size;
 	uint64_t src_size = src_size_seg * batch_size;
 	uint64_t dst_size = dst_size_seg * batch_size;
 
-	//数据块 0 1 2 3
-	//校验块 4 5
-	state->missing_indices = (uint32_t*)malloc((2)*sizeof(uint32_t));
+	// 数据块 0 1 2 3 4 5 6 7
+	// 校验块 8 9 10 11
+	// 模拟丢失前1个数据块
+	// 模拟丢失前1个校验块
+	state->missing_indices = (uint32_t*)malloc((n_missing)*sizeof(uint32_t));
 	state->missing_indices[0] = 0;
-	state->missing_indices[1] = 4;
+	state->missing_indices[1] = 1;
+	state->missing_indices[2] = 8;
+	state->missing_indices[3] = 9;
+	int align_size = 64*1024;
 
-	posix_memalign((void**)&state->src_buffer, 64*1024, src_size);
-	posix_memalign((void**)&state->dst_buffer, 64*1024, dst_size);
+	posix_memalign((void**)&state->src_buffer, align_size, src_size);
+	posix_memalign((void**)&state->dst_buffer, align_size, dst_size);
 
-	char* src;
-	posix_memalign((void**)&src, 64*1024, src_size_seg);
+	char* src_seg;
+	posix_memalign((void**)&src_seg, align_size, src_size_seg);
+
+	int remaining_data_block_num = 6;
+	int remaining_code_block_num = 2;
+
+	// prepare src data
 	int fd_data = open("./testInput", O_RDONLY);
-	lseek(fd_data, 1*block_size, SEEK_SET);
-	int n = read(fd_data, src, 3*block_size);
-	int fd_parity1 = open("./parity1", O_RDONLY);
-	n = read(fd_parity1, src + 3*block_size, 1*block_size);
+	lseek(fd_data, 2*block_size, SEEK_SET);
+	int n = read(fd_data, src_seg, remaining_data_block_num*block_size);
 
+	// prepare src parity
+	int fd_parity2 = open("./parity2", O_RDONLY);
+	n = read(fd_parity2, src_seg + remaining_data_block_num*block_size + 0*block_size, block_size);
+
+	int fd_parity3 = open("./parity3", O_RDONLY);
+	n = read(fd_parity3, src_seg + remaining_data_block_num*block_size + 1*block_size, block_size);
+
+	// 拷贝预热
 	for(int i=0;i<=batch_size-1;i++){
-		memcpy(state->src_buffer+i*src_size_seg, src, src_size_seg);
+		memcpy(state->src_buffer+i*src_size_seg, src_seg, src_size_seg);
 	}
+
+	// 每个recover任务的数据都是一样的，模拟数据测试性能；
+	struct timeval start_time, end_time;
+	gettimeofday(&start_time, 0);
+	for(int i=0;i<=batch_size-1;i++){
+		memcpy(state->src_buffer+i*src_size_seg, src_seg, src_size_seg);
+	}
+	gettimeofday(&end_time, 0);
+	int time_copy_src = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
 
 	union doca_data ctx_user_data;
 	union doca_data* task_user_data_ec_batch;
 
-	struct doca_buf **ec_src_doca_buf_batch;
-    struct doca_buf **ec_dst_doca_buf_batch;
-
     struct doca_ec_task_recover **ec_task_recover_batch;
     struct doca_task **ec_task_batch;
+	struct doca_ec_task_create **doca_task_reencode;
+    struct doca_task **doca_task_reencode_general;
 
     doca_error_t* ec_task_result_batch;
 
 	result = open_doca_device_with_pci("b1:00.0", (tasks_check)&doca_ec_cap_task_create_is_supported, &state->core_state.dev);
 
-    int max_buf_size = batch_size * 2; // src buffer num + dst buffer num
-    result = create_core_objects(&state->core_state, max_buf_size);
+	int doca_src_buf_num = batch_size * data_block_count;
+	int doca_dst_buf_num = batch_size; // doca ec 不支持dst使用link list
+	
+    result = create_core_objects(&state->core_state, doca_src_buf_num + doca_dst_buf_num);
     result = doca_ec_create(state->core_state.dev, &state->ec);
     state->core_state.ctx = doca_ec_as_ctx(state->ec);
     result = doca_pe_connect_ctx(state->core_state.pe, state->core_state.ctx);
 
+	gettimeofday(&start_time, 0);
     result = doca_mmap_set_memrange(state->core_state.src_mmap, state->src_buffer, src_size);
 	result = doca_mmap_start(state->core_state.src_mmap);
     result = doca_mmap_set_memrange(state->core_state.dst_mmap, state->dst_buffer, dst_size);
 	result = doca_mmap_start(state->core_state.dst_mmap);
+	gettimeofday(&end_time, 0);
+	int time_set_mmap = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
 
-    ec_src_doca_buf_batch = (struct doca_buf**)malloc(max_buf_size * sizeof(struct doca_buf*));
-	ec_dst_doca_buf_batch = (struct doca_buf**)malloc(max_buf_size * sizeof(struct doca_buf*));
+	struct doca_buf ***ec_src_doca_buf_batch;
+    ec_src_doca_buf_batch = (struct doca_buf***)malloc(batch_size * sizeof(struct doca_buf**));
+	for(int i=0; i<=batch_size-1; i++){
+		ec_src_doca_buf_batch[i] = (struct doca_buf**)malloc(data_block_count * sizeof(struct doca_buf*));
+	}
+
+	struct doca_buf **ec_dst_doca_buf_batch;
+	ec_dst_doca_buf_batch = (struct doca_buf**)malloc(batch_size * sizeof(struct doca_buf*));
 
     for(int i=0; i<=batch_size-1; i++){
-        result = doca_buf_inventory_buf_get_by_addr(state->core_state.buf_inv,
-						    state->core_state.src_mmap,
-						    state->src_buffer+i*src_size_seg,
-						    src_size_seg,
-						    &ec_src_doca_buf_batch[i]);
+		for(int j=0; j<=data_block_count-1; j++){
+			result = doca_buf_inventory_buf_get_by_addr(state->core_state.buf_inv,
+								state->core_state.src_mmap,
+								state->src_buffer, // 不起作用
+								block_size,
+								&ec_src_doca_buf_batch[i][j]);
+		}
+
 	    result = doca_buf_inventory_buf_get_by_addr(state->core_state.buf_inv,
 						    state->core_state.dst_mmap,
 						    state->dst_buffer+i*dst_size_seg,
@@ -907,36 +937,51 @@ doca_error_t ec_decode_batch(const char *pci_addr,
 					       ec_recover_completed_callback,
 					       ec_recover_error_callback,
 					       batch_size);
+	result = doca_ec_task_create_set_conf(state->ec,
+					       ec_create_completed_callback,
+					       ec_create_error_callback,
+					       batch_size);
+
 	ASSERT_DOCA_ERR(result, state, "Unable to set configuration for recover tasks");
 
 	/* Start the task */
 	result = doca_ctx_start(state->core_state.ctx);
-
+	
 	result = doca_ec_matrix_create(state->ec,
 				       DOCA_EC_MATRIX_TYPE_CAUCHY,
 				       data_block_count,
 				       rdnc_block_count,
 				       &state->encoding_matrix);
 
+	gettimeofday(&start_time, 0);
 	result = doca_ec_matrix_create_recover(state->ec,
 					       state->encoding_matrix,
 					       state->missing_indices,
 					       n_missing,
 					       &state->decoding_matrix);
+	gettimeofday(&end_time, 0);
+	int time_create_recover_matrix = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
 
 	task_user_data_ec_batch = (union doca_data**)malloc(batch_size * sizeof(union doca_data*));
+
     ec_task_recover_batch = (struct doca_ec_task_recover**)malloc(batch_size * sizeof(struct doca_ec_task_recover*));
     ec_task_batch = (struct doca_task**)malloc(batch_size * sizeof(struct doca_task*));
+	doca_task_reencode = (struct doca_ec_task_create**)malloc(batch_size * sizeof(struct doca_ec_task_create*));
+    doca_task_reencode_general = (struct doca_task**)malloc(batch_size * sizeof(struct doca_task*));
 
+	// set doca src buf data
     for(int i=0; i<=batch_size-1; i++){
+		// set remaining data
+		for(int j=0; j<=remaining_code_block_num+remaining_data_block_num-1; j++)
+			result = doca_buf_set_data(ec_src_doca_buf_batch[i][j], state->src_buffer + (src_size_seg*i) + block_size*j, block_size);
 
-        result = doca_buf_set_data(ec_src_doca_buf_batch[i], state->src_buffer + (src_size_seg*i), src_size_seg);
-
-        // task_user_data_ec_batch[i].ptr = &ec_task_result_batch[i];
+		for(int j=1; j<=remaining_code_block_num+remaining_data_block_num-1; j++)
+			result = doca_buf_chain_list(ec_src_doca_buf_batch[i][0], ec_src_doca_buf_batch[i][j]);
 
         result = doca_ec_task_recover_allocate_init(state->core_state.ctx,
                             state->decoding_matrix,
-                            ec_src_doca_buf_batch[i],
+                            ec_src_doca_buf_batch[i][0],
                             ec_dst_doca_buf_batch[i],
                             task_user_data_ec_batch[i],
                             &ec_task_recover_batch[i]);
@@ -944,8 +989,20 @@ doca_error_t ec_decode_batch(const char *pci_addr,
         ec_task_batch[i] = doca_ec_task_recover_as_task(ec_task_recover_batch[i]);
     }
 
+    for(int i=0; i<=batch_size-1; i++){
+		result = doca_ec_task_create_allocate_init(state->core_state.ctx,
+                            state->encoding_matrix,
+                            ec_src_doca_buf_batch[i][0],
+                            ec_dst_doca_buf_batch[i],
+                            task_user_data_ec_batch[i],
+                            &doca_task_reencode[i]);
+		if(result != DOCA_SUCCESS){
+			DOCA_LOG_ERR("%s", doca_error_get_descr(result));
+		}
+        doca_task_reencode_general[i] = doca_ec_task_create_as_task(doca_task_reencode[i]);
+	}
+
 	// batch process start time -       --------------------------------
-	struct timeval start_time, end_time;
 	gettimeofday(&start_time, 0);
 	for(int i=0; i<=batch_size-1; i++){
 		result = doca_task_submit(ec_task_batch[i]);
@@ -962,7 +1019,45 @@ doca_error_t ec_decode_batch(const char *pci_addr,
 	gettimeofday(&end_time, 0);
 	int time_cost_decoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
+
+
+	for(int i=0; i<=batch_size-1; i++){
+		doca_buf_reset_data_len(ec_dst_doca_buf_batch[i]);
+	}
+
+	// re-encode
+	gettimeofday(&start_time, 0);
+	for(int i=0; i<=batch_size-1; i++){
+		result = doca_task_submit(doca_task_reencode_general[i]);
+	}
+	state->num_remaining_tasks = batch_size;
+	state->run_pe_progress = true;
+	while (state->run_pe_progress) {
+		if (doca_pe_progress(state->core_state.pe) == 0)
+			nanosleep(&ts, &ts);
+	}
+	gettimeofday(&end_time, 0);
+	int time_cost_reencoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
+
+	gettimeofday(&start_time, 0);
+	for(int i=0; i<=batch_size-1; i++){
+		memcpy(state->src_buffer, state->dst_buffer, 4*block_size);
+	}
+	gettimeofday(&end_time, 0);
+	int time_copy_dst = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
+
+	printf("copy src time %d us\n", time_copy_src);
+	printf("create decode matrix time %d us\n", time_create_recover_matrix);
 	printf("decoding time %d us\n", time_cost_decoding);
+	printf("encoding time %d us\n", time_cost_reencoding);
+	printf("copy dst time %d us\n", time_copy_dst);
+
+	int time_total = time_copy_src + time_cost_decoding + 
+					 time_cost_reencoding + time_copy_dst +
+					 time_create_recover_matrix;
+	printf("TOTAL TIME %d us\n", time_total);
 
 	return DOCA_SUCCESS;
 }
@@ -1036,8 +1131,9 @@ doca_error_t ec_recover(const char *pci_addr,
 		output_file_path = output_path;
 	}
 
-	//result = ec_encode(pci_addr, input_path, matrix_type, output_path, data_block_count, rdnc_block_count);
-	//result = ec_delete_data(output_path, missing_indices, n_missing);
+	//result = ec_encode();
 	result = ec_decode_batch(pci_addr, matrix_type, output_file_path, dir_path, data_block_count, rdnc_block_count);
+	//result = ec_decode();
+
 	return result;
 }

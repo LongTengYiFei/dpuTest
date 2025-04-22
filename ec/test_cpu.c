@@ -10,13 +10,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-
-#define K 4 // 数据块数量
-#define M 2 // 校验块数量
+#define K 8 // 数据块数量
+#define M 4 // 校验块数量
 #define W 8 // Galois 域的宽度
 
 int main() {
-
     size_t data_size = 1024 * 1024 * 64; 
     void* data;
     size_t alignment = 4096; // 通常为文件系统的块大小
@@ -57,27 +55,17 @@ int main() {
     printf("matrix encoding time %d us\n", time_cost_encoding);
 
     // 恢复测试
-    // data   0 1 2 3 
-    // parity 4 5
-    int erasures[] = {4, -1};
-    memset(coding_blocks[0], 0, block_size); 
-
+    // data   0 1 2 3 4 5 6 7
+    // parity 8 9 10 11
+    int erasures[] = {0,1,8,9,-1};
+    int erasure_count = 4;
     // 解码恢复数据
     gettimeofday(&start_time, 0);
     jerasure_matrix_decode(K, M, W, matrix_RSvandermode, 1, erasures, data_blocks, coding_blocks, block_size);
     gettimeofday(&end_time, 0);
     int time_cost_decoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
                      end_time.tv_usec - start_time.tv_usec;
-    printf("matrix decoding time %d us\n", time_cost_decoding);
-
-    // write to file
-    int fd2 = open("/home/cyf/ssd/testOutput", O_CREAT | O_RDWR | __O_DIRECT , 0777);
-    gettimeofday(&start_time, 0);
-    int n = write(fd2, data, block_size);
-    gettimeofday(&end_time, 0);
-    int time_cost_write = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
-                     end_time.tv_usec - start_time.tv_usec;
-    printf("matrix write time %d us\n", time_cost_write);
-
+    printf("One stripe matrix decoding time %d us, K=%d, M=%d, W=%d, erasure count = %d\n", 
+            time_cost_decoding, K, M, W, erasure_count);
     return 0;
 }
