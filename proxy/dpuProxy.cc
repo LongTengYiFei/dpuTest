@@ -548,8 +548,8 @@ void DPUProxy::initECBatch(int data_count, int rdnc_count, int block_size, int b
     this->state = &ec_resources.state;
 
     // doca 默认最大block size 1MB
-    this->ec_src_size = data_count * block_size * batch_size;
-    this->ec_dst_size = rdnc_count * block_size * batch_size;
+    this->ec_src_size = (long)data_count * (long)block_size * (long)batch_size;
+    this->ec_dst_size = (long)rdnc_count * (long)block_size * (long)batch_size;
     this->ec_src = (char*)malloc(ec_src_size);
     this->ec_dst = (char*)malloc(ec_dst_size);
 
@@ -686,5 +686,3 @@ void DPUProxy::prepareECBatch(char* input_data, int block_size, int k, int batch
 int DPUProxy::getECBatchProcessTime(){
     return this->ec_batch_process_time;
 }
-
-

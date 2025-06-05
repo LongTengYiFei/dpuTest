@@ -77,8 +77,8 @@ private:
 	struct doca_ec_matrix *decoding_matrix;
     char* ec_src;
     char* ec_dst;
-    int ec_src_size;
-    int ec_dst_size;
+    long ec_src_size;
+    long ec_dst_size;
     int k;
     int m;
 
