@@ -134,15 +134,15 @@ doca_error_t initDecompressionResources(int _batch_size, int _blob_size_KB)
 		exit(-1);
 	}
 
-	src_buffer_decompress = (char*)malloc(blob_size*batch_size);
-	dst_buffer_decompress = (char*)malloc(blob_size*batch_size);
+	src_buffer_decompress = (char*)malloc(blob_size*batch_size*2);
+	dst_buffer_decompress = (char*)malloc(blob_size*batch_size*2);
 
 	/* Start compress context */
 	result = doca_ctx_start(state_decompress->ctx);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to start context: %s", doca_error_get_descr(result));
 		
-	result = doca_mmap_set_memrange(state_decompress->dst_mmap, dst_buffer_decompress, blob_size*batch_size);
+	result = doca_mmap_set_memrange(state_decompress->dst_mmap, dst_buffer_decompress, blob_size*batch_size*2);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
 
@@ -150,7 +150,7 @@ doca_error_t initDecompressionResources(int _batch_size, int _blob_size_KB)
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to start mmap: %s", doca_error_get_descr(result));
 
-	result = doca_mmap_set_memrange(state_decompress->src_mmap, src_buffer_decompress, blob_size*batch_size);
+	result = doca_mmap_set_memrange(state_decompress->src_mmap, src_buffer_decompress, blob_size*batch_size*2);
 	if (result != DOCA_SUCCESS) 
 		DOCA_LOG_ERR("Failed to set mmap memory range: %s", doca_error_get_descr(result));
 
@@ -169,9 +169,9 @@ doca_error_t initDecompressionResources(int _batch_size, int _blob_size_KB)
 		memset(&task_user_data_batch_decompress[i], 0, sizeof(struct compress_deflate_result));
 
 		result = doca_buf_inventory_buf_get_by_addr(state_decompress->buf_inv, state_decompress->src_mmap, 
-			src_buffer_decompress+i*blob_size, blob_size, &src_doca_buf_batch_decompress[i]);
+			src_buffer_decompress+i*blob_size*2, blob_size*2, &src_doca_buf_batch_decompress[i]);
 		result = doca_buf_inventory_buf_get_by_addr(state_decompress->buf_inv, state_decompress->dst_mmap, 
-			dst_buffer_decompress+i*blob_size, blob_size, &dst_doca_buf_batch_decompress[i]);
+			dst_buffer_decompress+i*blob_size*2, blob_size*2, &dst_doca_buf_batch_decompress[i]);
 
 		task_user_data_batch_decompress[i].ptr = &task_result_batch_decompress[i];
 		result = doca_compress_task_decompress_deflate_alloc_init(resources_decompress.compress,
@@ -411,15 +411,17 @@ doca_error_t test3(const char *file_name, int _batch_size, int _blob_size){
 		/*
 			doca decompress
 		*/
+		// 多准备点空间，因为压缩率低的场景，可能会越压缩越大。
+		// _blob_size*2
 		for(int i=0; i<=_batch_size-1;i++)
-			memcpy(src_buffer_decompress+i*_blob_size, cpu_dst_buffer_compress[i], blob_size);
+			memcpy(src_buffer_decompress+i*_blob_size*2, cpu_dst_buffer_compress[i], blob_size*2);
 
 		gettimeofday(&start_time, NULL);
 		for(int i=0; i<=batch_size-1; i++){
 			result = doca_buf_reset_data_len(dst_doca_buf_batch_decompress[i]);
 			// result = doca_buf_set_data(src_doca_buf_batch_decompress[i], src_buffer_decompress+i*blob_size+, compressed_lengths[i]);
 			result = doca_buf_set_data(src_doca_buf_batch_decompress[i], 
-							src_buffer_decompress+i*_blob_size+ZLIB_HEADER_SIZE, 
+							src_buffer_decompress+i*_blob_size*2+ZLIB_HEADER_SIZE, 
 							compressed_lengths[i]-ZLIB_COMPATIBILITY_ADDITIONAL_MEMORY);
 
 			result = doca_task_submit(task_batch_decompress[i]);
@@ -537,10 +539,11 @@ void traverseDir(const char *base_path) {
         // 如果是文件且以 ".log" 结尾，打印文件路径
         else if (S_ISREG(info.st_mode)) {
             const char *ext = strrchr(entry->d_name, '.');
-            if (ext && strcmp(ext, ".log") == 0) {
-				test3(path, batch_size, blob_size);
-                // compressFileDOCA(path, batch_size, blob_size);
-            }
+            // if (ext && strcmp(ext, ".log") == 0) {
+			// 	test3(path, batch_size, blob_size);
+            //     // compressFileDOCA(path, batch_size, blob_size);
+            // }
+			test3(path, batch_size, blob_size);
         }
     }
 
