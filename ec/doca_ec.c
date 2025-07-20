@@ -37,9 +37,9 @@
 #include <utils.h>
 
 #include "common.h"
-#include <jerasure.h>
-#include <jerasure/reed_sol.h>
-#include <jerasure/cauchy.h>
+// #include <jerasure.h>
+// #include <jerasure/reed_sol.h>
+// #include <jerasure/cauchy.h>
 // #include "doca_common.h"
 
 #include <sys/time.h>
@@ -361,6 +361,13 @@ static void ec_create_completed_callback(struct doca_ec_task_create *create_task
 	    state->run_pe_progress = false;
 }
 
+void writeRandomData(char* buf, size_t len) {
+	int i;
+	for (i = 0; i < len; i++) {
+		buf[i] = rand();
+	}
+}
+
 /*
  * Run ec encode
  *
@@ -372,12 +379,18 @@ static void ec_create_completed_callback(struct doca_ec_task_create *create_task
  * @rdnc_block_count [in]: redundancy block count
  * @return: DOCA_SUCCESS on success, DOCA_ERROR otherwise.
  */
-doca_error_t ec_encode()
+doca_error_t encode(int k, int m, int block_size)
 {
+	// 统计信息
+	struct timeval start_time, end_time;
+	uint64_t matrix_create_time_us = 0;
+	uint64_t doca_pure_encode_time = 0;
+	uint64_t copy_src_time_us = 0;
+	uint64_t copy_dst_time_us = 0;
+
 	uint32_t max_bufs = 2;
 	doca_error_t result;
 	uint64_t max_block_size;
-	uint64_t block_size;
 	uint64_t src_size;
 	uint64_t dst_size;
 	struct ec_sample_objects state_object = {0};
@@ -394,22 +407,22 @@ doca_error_t ec_encode()
 	struct doca_ec_task_create *task;
 	struct create_task_data task_data;
 
-	int data_block_count = 8;
-	int rdnc_block_count = 4;
+	int data_block_count = k;
+	int rdnc_block_count = m;
 	struct doca_buf **src_doca_bufs;		/* Source doca buffer as input for the task */
 	// 即使是一个stripe也离散开，不放在一起
 	src_doca_bufs = (struct doca_buf **)malloc(data_block_count*sizeof(struct doca_buf*));
 
-	block_size = 1024*1024;
-	int file_size = 64*1024*1024;
 	int align_size = 64*1024;
 	src_size = (uint64_t)block_size * data_block_count;
 	dst_size = (uint64_t)block_size * rdnc_block_count;
 	char* pci_addr = "b1:00.0";
 
 	posix_memalign(&state->src_buffer, align_size, src_size);
-	int fd_data = open("./testInput", O_RDONLY);
-	read(fd_data, state->src_buffer, src_size);
+
+	// 根据条带大小注入适量的随机数据
+	// 比如4+2，我只需要读4M就行了，如果我模拟编码128MB数据，那么我循环32次encode即可。
+	writeRandomData(state->src_buffer, src_size);
 
 	posix_memalign(&state->dst_buffer, align_size, dst_size);
 	SAMPLE_ASSERT(state->dst_buffer != NULL, DOCA_ERROR_NO_MEMORY, state, "Unable to allocate dst_buffer string");
@@ -480,12 +493,16 @@ doca_error_t ec_encode()
 
 	result = doca_ctx_start(state->core_state.ctx);
 
+	gettimeofday(&start_time, 0);
 	result = doca_ec_matrix_create(state->ec,
-				       DOCA_EC_MATRIX_TYPE_CAUCHY,
+				       DOCA_EC_MATRIX_TYPE_VANDERMONDE,
 				       data_block_count,
 				       rdnc_block_count,
 				       &state->encoding_matrix);
-
+	gettimeofday(&end_time, 0);
+	matrix_create_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
+	
 	ASSERT_DOCA_ERR(result, state, "Unable to create ec matrix");
 
 	SAMPLE_ASSERT(
@@ -509,36 +526,29 @@ doca_error_t ec_encode()
 	doca_task = doca_ec_task_create_as_task(task);
 	SAMPLE_ASSERT(doca_task != NULL, DOCA_ERROR_UNEXPECTED, state, "Unable to retrieve task as doca_task");
 
-	struct timeval start_time, end_time;
 	gettimeofday(&start_time, 0);
-
 	result = doca_task_submit(doca_task);
 	ASSERT_DOCA_ERR(result, state, "Unable to submit task");
 
 	state->run_pe_progress = true;
 	state->num_remaining_tasks = 1;
-	while (state->run_pe_progress) {
+	while (state->run_pe_progress){
 		if (doca_pe_progress(state->core_state.pe) == 0)
 			nanosleep(&ts, &ts);
 	}
 	gettimeofday(&end_time, 0);
-	int time_cost_encoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	doca_pure_encode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
-	printf("encoding time %d us\n", time_cost_encoding);
 
 	int len;
 	doca_buf_get_data_len(state->dst_doca_buf, &len);
 	printf("dst len %d\n", len);
 	result = doca_buf_get_data(state->dst_doca_buf, (void **)&state->dst_buffer);
 		
-	// write parity block
-	for(int i=0; i<=rdnc_block_count-1; i++){
-		char* file_name = (char*)malloc(20);
-		sprintf(file_name, "./parity%d", i);
-		int fd = open(file_name, O_RDWR | O_CREAT , 0666);
-		write(fd, state->dst_buffer+i*block_size, block_size);
-		close(fd);
-	}
+	// 打印统计信息
+	printf("matrix create time %d us\n", matrix_create_time_us);
+	printf("pure encode time %d us\n", doca_pure_encode_time);
+
 	return callback_result;
 }
 
@@ -712,7 +722,7 @@ doca_error_t ec_decode()
 	ASSERT_DOCA_ERR(result, state, "Unable to start context");
 
 	result = doca_ec_matrix_create(state->ec,
-				       DOCA_EC_MATRIX_TYPE_CAUCHY,
+				       DOCA_EC_MATRIX_TYPE_VANDERMONDE,
 				       data_block_count,
 				       rdnc_block_count,
 				       &state->encoding_matrix);
@@ -796,8 +806,18 @@ double get_time_sec() {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-doca_error_t ec_decode_batch()
+doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int erasures_count)
 {
+	// 统计信息
+	struct timeval start_time, end_time;
+	uint64_t matrix_create_time_us = 0;
+	uint64_t doca_pure_decode_time = 0;
+	uint64_t copy_src_time_us = 0;
+	uint64_t copy_dst_time_us = 0;
+	uint64_t set_mmap_time_us = 0;
+	uint64_t task_init_time_us = 0;
+	uint64_t test_time_us = 0;
+
 	uint32_t max_bufs = 2;
 	doca_error_t result;
 	struct ec_sample_objects state_object = {0};
@@ -816,26 +836,24 @@ doca_error_t ec_decode_batch()
 	struct doca_ec_task_recover *task;
 	struct recover_task_data task_data;
 
-	#define MB (1024*1024)
-	uint64_t block_size = MB;
-	size_t n_missing = 4;
-	int batch_size = 64;
-	int data_block_count = 8;
-	int rdnc_block_count = 4;
+	size_t n_missing = erasures_count;
+	int data_block_count = k;
+	int rdnc_block_count = m;
 	int src_size_seg = data_block_count * block_size;
 	int dst_size_seg = rdnc_block_count * block_size;
 	uint64_t src_size = src_size_seg * batch_size;
 	uint64_t dst_size = dst_size_seg * batch_size;
 
-	// 数据块 0 1 2 3 4 5 6 7
-	// 校验块 8 9 10 11
-	// 模拟丢失前1个数据块
-	// 模拟丢失前1个校验块
 	state->missing_indices = (uint32_t*)malloc((n_missing)*sizeof(uint32_t));
-	state->missing_indices[0] = 0;
-	state->missing_indices[1] = 1;
-	state->missing_indices[2] = 8;
-	state->missing_indices[3] = 9;
+
+	// 默认丢失后面的块
+	// 不管丢失几个块，我都需要K个块来反向推导
+	for(int i = 0; i < n_missing; i++){
+		state->missing_indices[i] = m+i;
+	}
+	int remaining_data_block_num = k-m;
+	int remaining_code_block_num = m;
+
 	int align_size = 64*1024;
 
 	posix_memalign((void**)&state->src_buffer, align_size, src_size);
@@ -844,34 +862,26 @@ doca_error_t ec_decode_batch()
 	char* src_seg;
 	posix_memalign((void**)&src_seg, align_size, src_size_seg);
 
-	int remaining_data_block_num = 6;
-	int remaining_code_block_num = 2;
+	// prepare data block
+	writeRandomData(src_seg, remaining_data_block_num*block_size);
 
-	// prepare src data
-	int fd_data = open("./testInput", O_RDONLY);
-	lseek(fd_data, 2*block_size, SEEK_SET);
-	int n = read(fd_data, src_seg, remaining_data_block_num*block_size);
-
-	// prepare src parity
-	int fd_parity2 = open("./parity2", O_RDONLY);
-	n = read(fd_parity2, src_seg + remaining_data_block_num*block_size + 0*block_size, block_size);
-
-	int fd_parity3 = open("./parity3", O_RDONLY);
-	n = read(fd_parity3, src_seg + remaining_data_block_num*block_size + 1*block_size, block_size);
+	// prepare parity block
+	for(int i=0; i<=m; i++){
+		writeRandomData(src_seg + remaining_data_block_num*block_size + i*block_size, block_size);
+	}
 
 	// 拷贝预热
-	for(int i=0;i<=batch_size-1;i++){
+	for(int i=0; i<=batch_size-1; i++){
 		memcpy(state->src_buffer+i*src_size_seg, src_seg, src_size_seg);
 	}
 
 	// 每个recover任务的数据都是一样的，模拟数据测试性能；
-	struct timeval start_time, end_time;
 	gettimeofday(&start_time, 0);
 	for(int i=0;i<=batch_size-1;i++){
 		memcpy(state->src_buffer+i*src_size_seg, src_seg, src_size_seg);
 	}
 	gettimeofday(&end_time, 0);
-	int time_copy_src = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	copy_src_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	union doca_data ctx_user_data;
@@ -900,7 +910,7 @@ doca_error_t ec_decode_batch()
     result = doca_mmap_set_memrange(state->core_state.dst_mmap, state->dst_buffer, dst_size);
 	result = doca_mmap_start(state->core_state.dst_mmap);
 	gettimeofday(&end_time, 0);
-	int time_set_mmap = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	set_mmap_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	struct doca_buf ***ec_src_doca_buf_batch;
@@ -948,7 +958,7 @@ doca_error_t ec_decode_batch()
 	result = doca_ctx_start(state->core_state.ctx);
 	
 	result = doca_ec_matrix_create(state->ec,
-				       DOCA_EC_MATRIX_TYPE_CAUCHY,
+				       DOCA_EC_MATRIX_TYPE_VANDERMONDE,
 				       data_block_count,
 				       rdnc_block_count,
 				       &state->encoding_matrix);
@@ -960,7 +970,7 @@ doca_error_t ec_decode_batch()
 					       n_missing,
 					       &state->decoding_matrix);
 	gettimeofday(&end_time, 0);
-	int time_create_recover_matrix = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	matrix_create_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	task_user_data_ec_batch = (union doca_data**)malloc(batch_size * sizeof(union doca_data*));
@@ -971,6 +981,7 @@ doca_error_t ec_decode_batch()
     doca_task_reencode_general = (struct doca_task**)malloc(batch_size * sizeof(struct doca_task*));
 
 	// set doca src buf data
+	gettimeofday(&start_time, 0);
     for(int i=0; i<=batch_size-1; i++){
 		// set remaining data
 		for(int j=0; j<=remaining_code_block_num+remaining_data_block_num-1; j++)
@@ -988,19 +999,9 @@ doca_error_t ec_decode_batch()
 
         ec_task_batch[i] = doca_ec_task_recover_as_task(ec_task_recover_batch[i]);
     }
-
-    for(int i=0; i<=batch_size-1; i++){
-		result = doca_ec_task_create_allocate_init(state->core_state.ctx,
-                            state->encoding_matrix,
-                            ec_src_doca_buf_batch[i][0],
-                            ec_dst_doca_buf_batch[i],
-                            task_user_data_ec_batch[i],
-                            &doca_task_reencode[i]);
-		if(result != DOCA_SUCCESS){
-			DOCA_LOG_ERR("%s", doca_error_get_descr(result));
-		}
-        doca_task_reencode_general[i] = doca_ec_task_create_as_task(doca_task_reencode[i]);
-	}
+	gettimeofday(&end_time, 0);
+	task_init_time_us= (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+        end_time.tv_usec - start_time.tv_usec;
 
 	// batch process start time -       --------------------------------
 	gettimeofday(&start_time, 0);
@@ -1015,125 +1016,103 @@ doca_error_t ec_decode_batch()
 		if (doca_pe_progress(state->core_state.pe) == 0)
 			nanosleep(&ts, &ts);
 	}
-
 	gettimeofday(&end_time, 0);
-	int time_cost_decoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	doca_pure_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
-
+	gettimeofday(&start_time, 0);
 	for(int i=0; i<=batch_size-1; i++){
 		doca_buf_reset_data_len(ec_dst_doca_buf_batch[i]);
 	}
-
-	// re-encode
-	gettimeofday(&start_time, 0);
-	for(int i=0; i<=batch_size-1; i++){
-		result = doca_task_submit(doca_task_reencode_general[i]);
-	}
-	state->num_remaining_tasks = batch_size;
-	state->run_pe_progress = true;
-	while (state->run_pe_progress) {
-		if (doca_pe_progress(state->core_state.pe) == 0)
-			nanosleep(&ts, &ts);
-	}
 	gettimeofday(&end_time, 0);
-	int time_cost_reencoding = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	test_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	gettimeofday(&start_time, 0);
 	for(int i=0; i<=batch_size-1; i++){
-		memcpy(state->src_buffer, state->dst_buffer, 4*block_size);
+		memcpy(state->src_buffer, state->dst_buffer, erasures_count*block_size);
 	}
 	gettimeofday(&end_time, 0);
-	int time_copy_dst = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	copy_dst_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
-	printf("copy src time %d us\n", time_copy_src);
-	printf("create decode matrix time %d us\n", time_create_recover_matrix);
-	printf("decoding time %d us\n", time_cost_decoding);
-	printf("encoding time %d us\n", time_cost_reencoding);
-	printf("copy dst time %d us\n", time_copy_dst);
-
-	int time_total = time_copy_src + time_cost_decoding + 
-					 time_cost_reencoding + time_copy_dst +
-					 time_create_recover_matrix;
-	printf("TOTAL TIME %d us\n", time_total);
-
+	printf("copy src time %ld us\n", copy_src_time_us);
+	printf("copy dst time %ld us\n", copy_dst_time_us);
+	printf("copy pure decode time %ld us\n", doca_pure_decode_time);
+	printf("matrix create time %ld us\n", matrix_create_time_us);
+	printf("set mmap time %ld us\n", set_mmap_time_us);
+	printf("task init time %ld us\n", task_init_time_us);
+	printf("test time %ld us\n", test_time_us);
 	return DOCA_SUCCESS;
 }
 
-/*
- * Delete data (that EC will recover)
- *
- * @output_path [in]: path to the task output file
- * @missing_indices [in]: data indices to delete
- * @n_missing [in]: indices count
- * @return: DOCA_SUCCESS on success, DOCA_ERROR otherwise.
- */
-doca_error_t ec_delete_data(const char *output_path, uint32_t *missing_indices, size_t n_missing)
-{
-	char full_path[MAX_PATH_NAME];
-	int ret;
-	uint32_t i;
+# define MB (1024*1024*1024)
+# define BLOCK_SIZE MB
+# define W 8
 
-	for (i = 0; i < n_missing; i++) {
-		ret = snprintf(full_path,
-			       sizeof(full_path),
-			       "%s/%s%d",
-			       output_path,
-			       DATA_BLOCK_FILE_NAME,
-			       missing_indices[i]);
-		if ((ret >= 0 && ret < (int)sizeof(full_path)) && remove(full_path) == 0)
-			DOCA_LOG_INFO("Deleted successfully: %s", full_path);
-		else
-			return DOCA_ERROR_IO_FAILED;
-	}
-	return DOCA_SUCCESS;
+int size_convert(char* s) {
+    double num = 0;
+    char unit[3] = {0};
+    int i = 0, j = 0;
+    
+    // 提取数字部分
+    while (s[i] && (isdigit(s[i]) || s[i] == '.')) {
+        i++;
+    }
+    
+    // 将数字部分转换为double
+    char num_str[32] = {0};
+    strncpy(num_str, s, i);
+    num = atof(num_str);
+    
+    // 提取单位部分并转换为大写
+    while (s[i] && j < 2) {
+        if (isalpha(s[i])) {
+            unit[j++] = toupper(s[i]);
+            i++;
+        } else {
+            i++;
+        }
+    }
+    
+    // 根据单位计算大小
+    if (strcmp(unit, "KB") == 0) {
+        return (int)(num * 1024);
+    } else if (strcmp(unit, "MB") == 0) {
+        return (int)(num * 1024 * 1024);
+    } else if (strcmp(unit, "GB") == 0) {
+        return (int)(num * 1024 * 1024 * 1024);
+    } else if (strcmp(unit, "B") == 0 || unit[0] == '\0') {
+        return (int)num;
+    } else {
+        // 未知单位，可以根据需要处理错误
+        return -1;
+    }
 }
 
-/*
- * Run ec_recover sample
- *
- * @pci_addr [in]: PCI address of a doca device
- * @input_path [in]: input file to encode or input blocks dir to decode
- * @output_path [in]: output might be a file or a folder - depends on the input and do_both
- * @do_both [in]: to do full process - encoding & decoding
- * @matrix_type [in]: matrix type
- * @data_block_count [in]: data block count
- * @rdnc_block_count [in]: redundancy block count
- * @missing_indices [in]: data indices to delete
- * @n_missing [in]: indices count
- * @return: DOCA_SUCCESS on success, DOCA_ERROR otherwise.
- */
-doca_error_t ec_recover(const char *pci_addr,
-			const char *input_path,
-			const char *output_path,
-			bool do_both,
-			enum doca_ec_matrix_type matrix_type,
-			uint32_t data_block_count,
-			uint32_t rdnc_block_count,
-			uint32_t *missing_indices,
-			size_t n_missing)
-{
-	doca_error_t result = DOCA_SUCCESS;
-	struct stat path_stat;
-	bool input_path_is_file;
-	const char *dir_path = output_path;
-	const char *output_file_path = NULL;
+int main(int argc, char** argv) {
+	char* task_type = argv[1];
+    int k = atoi(argv[2]);
+    int m = atoi(argv[3]);
+    int block_size = size_convert(argv[4]);
+	int batch_size = atoi(argv[5]);
+	int erasures_count = atoi(argv[6]);
 
-	if (stat(input_path, &path_stat) != 0) {
-		DOCA_LOG_INFO("Can't read input file stat: %s", input_path);
-		return DOCA_ERROR_IO_FAILED;
-	}
-	input_path_is_file = S_ISREG(path_stat.st_mode);
-	if (!do_both && !input_path_is_file) { /* only decode mode */
-		dir_path = input_path;
-		output_file_path = output_path;
-	}
+    if(strcmp(task_type, "encode") == 0){
+		/*
+			使用方法
+			./doca_ec_test encode 4 2 1MB
+		*/
+        encode(k, m, block_size);
+    }else if (strcmp(task_type, "decode") == 0){
 
-	//result = ec_encode();
-	result = ec_decode_batch(pci_addr, matrix_type, output_file_path, dir_path, data_block_count, rdnc_block_count);
-	//result = ec_decode();
-
-	return result;
+    }else if (strcmp(task_type, "decode_batch") == 0){
+		/*
+			使用方法
+			./doca_ec_test decode_batch 4 2 1MB 32
+		*/
+		decode_batch(k, m, block_size, batch_size, erasures_count);
+    }
+    
+    return 0;
 }

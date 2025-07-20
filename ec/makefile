@@ -1,4 +1,4 @@
-SRC = 	main.c ec.c \
+SRC = 	doca_ec.c \
 		/opt/mellanox/doca/samples/common.c \
 		/opt/mellanox/doca/applications/common/utils.c 
 SRC2 = test_cpu.c
@@ -13,10 +13,11 @@ LIBS = -ldoca_erasure_coding -ldoca_common -ldoca_argp -lm \
 
 doca_ec_test:
 	gcc $(SRC) $(INC) $(LIBS) -o doca_ec_test -g -lstdc++ \
-		-lcrypto -lJerasure -lgf_complete -L/usr/local/lib
+		-lcrypto -L/usr/local/lib
 
 cpu_ec_test:
 	gcc $(SRC2) -o cpu_ec_test -g -lstdc++ -lJerasure -lgf_complete -L/usr/local/lib -I/usr/local/include/jerasure
 
 clean:
+	rm doca_ec_test
 	rm cpu_ec_test

@@ -14,14 +14,20 @@
 #define M 4 // 校验块数量
 #define W 8 // Galois 域的宽度
 
+void writeRandomData(char* buf, size_t len) {
+	int i;
+	for (i = 0; i < len; i++) {
+		buf[i] = rand();
+	}
+}
+
 int main() {
     size_t data_size = 1024 * 1024 * 64; 
     void* data;
     size_t alignment = 4096; // 通常为文件系统的块大小
     size_t buffer_size = data_size;
     int ret = posix_memalign(&data, alignment, buffer_size);
-    int fd = open("./testInput", O_RDONLY);
-    read(fd, data, data_size);
+    writeRandomData(data, data_size);
 
     // 每个块的大小
     size_t block_size = 1024*1024;
@@ -57,7 +63,7 @@ int main() {
     // 恢复测试
     // data   0 1 2 3 4 5 6 7
     // parity 8 9 10 11
-    int erasures[] = {0,1,8,9,-1};
+    int erasures[] = {4,5,6,7,-1};
     int erasure_count = 4;
     // 解码恢复数据
     gettimeofday(&start_time, 0);
