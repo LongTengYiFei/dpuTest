@@ -663,8 +663,12 @@ void DPUProxy::waitingECTasksBatch(){
 }
 
 void DPUProxy::getECTaskResultBatch(int task_index, char** coding, int block_size){
+    gettimeofday(&start_time, 0);
     for(int i=0, coding_off=0; i<=this->m-1; i++, coding_off+=block_size)
         memcpy(coding[i], ec_dst + (coding_off) + (block_size*m*task_index), block_size);
+    gettimeofday(&end_time, 0);
+    this->ec_batch_memcpy_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
 }
 
 void DPUProxy::encode_chunks(char* input_data, int block_size, int k, int batch_size){
@@ -676,13 +680,23 @@ void DPUProxy::encode_chunks(char* input_data, int block_size, int k, int batch_
 
 void DPUProxy::prepareECBatch(char* input_data, int block_size, int k, int batch_size){
     int data_stripe_size = block_size * k;
+    
+    gettimeofday(&start_time, 0);
     for(int i=0; i<=batch_size-1; i++){
         memcpy(ec_src + data_stripe_size*i, 
                 input_data + data_stripe_size*i, 
                 data_stripe_size);
     }
+    gettimeofday(&end_time, 0);
+    this->ec_batch_memcpy_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+                         end_time.tv_usec - start_time.tv_usec;
 }
 
 int DPUProxy::getECBatchProcessTime(){
     return this->ec_batch_process_time;
 }
+
+int DPUProxy::getECBatchMemcpyTime(){
+    return this->ec_batch_memcpy_time;
+}
+

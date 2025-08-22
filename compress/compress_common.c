@@ -24,7 +24,7 @@
 #include <doca_argp.h>
 #include <doca_compress.h>
 
-#include "../common.h"
+#include "common.h"
 #include "compress_common.h"
 
 /*
@@ -560,13 +560,13 @@ doca_error_t allocate_compress_resources(const char *pci_addr, uint32_t max_bufs
 		result = doca_compress_task_compress_deflate_set_conf(resources->compress,
 								      compress_completed_callback,
 								      compress_error_callback,
-								      NUM_COMPRESS_TASKS);
+								      max_bufs/2);
 		break;
 	case COMPRESS_MODE_DECOMPRESS_DEFLATE:
 		result = doca_compress_task_decompress_deflate_set_conf(resources->compress,
 									decompress_deflate_completed_callback,
 									decompress_deflate_error_callback,
-									NUM_COMPRESS_TASKS);
+									max_bufs/2);
 		break;
 	case COMPRESS_MODE_DECOMPRESS_LZ4_STREAM:
 		result = doca_compress_task_decompress_lz4_stream_set_conf(resources->compress,
@@ -873,7 +873,7 @@ void compress_completed_callback(struct doca_compress_task_compress_deflate *com
 	struct compress_resources *resources = (struct compress_resources *)ctx_user_data.ptr;
 	struct compress_deflate_result *result = (struct compress_deflate_result *)task_user_data.ptr;
 
-	DOCA_LOG_INFO("Compress task was done successfully");
+	//DOCA_LOG_INFO("Compress task was done successfully");
 
 	/* Prepare task result */
 	result->crc_cs = doca_compress_task_compress_deflate_get_crc_cs(compress_task);
@@ -881,12 +881,13 @@ void compress_completed_callback(struct doca_compress_task_compress_deflate *com
 	result->status = DOCA_SUCCESS;
 
 	/* Free task */
-	doca_task_free(doca_compress_task_compress_deflate_as_task(compress_task));
+	//doca_task_free(doca_compress_task_compress_deflate_as_task(compress_task));
 	/* Decrement number of remaining tasks */
 	--resources->num_remaining_tasks;
 	/* Stop context once all tasks are completed */
 	if (resources->num_remaining_tasks == 0)
-		(void)doca_ctx_stop(resources->state->ctx);
+		resources->run_pe_progress = false;
+		//(void)doca_ctx_stop(resources->state->ctx);
 }
 
 void compress_error_callback(struct doca_compress_task_compress_deflate *compress_task,
@@ -916,7 +917,7 @@ void decompress_deflate_completed_callback(struct doca_compress_task_decompress_
 	struct compress_resources *resources = (struct compress_resources *)ctx_user_data.ptr;
 	struct compress_deflate_result *result = (struct compress_deflate_result *)task_user_data.ptr;
 
-	DOCA_LOG_INFO("Decompress task was done successfully");
+	// DOCA_LOG_INFO("Decompress task was done successfully");
 
 	/* Prepare task result */
 	result->crc_cs = doca_compress_task_decompress_deflate_get_crc_cs(decompress_task);
@@ -924,12 +925,13 @@ void decompress_deflate_completed_callback(struct doca_compress_task_decompress_
 	result->status = DOCA_SUCCESS;
 
 	/* Free task */
-	doca_task_free(doca_compress_task_decompress_deflate_as_task(decompress_task));
+	// doca_task_free(doca_compress_task_decompress_deflate_as_task(decompress_task));
 	/* Decrement number of remaining tasks */
 	--resources->num_remaining_tasks;
 	/* Stop context once all tasks are completed */
 	if (resources->num_remaining_tasks == 0)
-		(void)doca_ctx_stop(resources->state->ctx);
+		resources->run_pe_progress = false;
+		// (void)doca_ctx_stop(resources->state->ctx);
 }
 
 void decompress_deflate_error_callback(struct doca_compress_task_decompress_deflate *decompress_task,

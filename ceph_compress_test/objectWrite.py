@@ -4,7 +4,7 @@ import rados
 import time
 
 
-
+obj_num = 0
 total_write_time = 0
 total_read_time = 0
 
@@ -24,6 +24,9 @@ def traverse_directory_one_layer(directory):
 
 
 def traverse_directory_write(directory, conf_path, pool_name):
+    global obj_num
+    obj_num = 0
+    print("开始写入文件：")
     # 配置 Ceph 集群连接
     cluster = rados.Rados(conffile=conf_path)
     cluster.connect()
@@ -41,6 +44,7 @@ def traverse_directory_write(directory, conf_path, pool_name):
         for file_name in files:
             file_path = os.path.join(root, file_name)
             process_file(file_path, ioctx)
+            print(f"写入文件：{file_path}")
 
     ioctx.close()
     cluster.shutdown()
@@ -48,9 +52,10 @@ def traverse_directory_write(directory, conf_path, pool_name):
 
 def process_file(file_path, ioctx):
     global total_write_time
-    chunk_size = 2 * 1024 * 1024
+    global obj_num
+    chunk_size = 4 * 1024 * 1024
 
-    if file_path.endswith('.log'):
+    if file_path.endswith('.log') or file_path.endswith('.fits'):
         with open(file_path, 'rb') as file:
             file_size = os.path.getsize(file_path)
             if file_size > chunk_size:
@@ -62,6 +67,8 @@ def process_file(file_path, ioctx):
                     ioctx.write(object_name, chunk)
                     end_time = time.time()
                     total_write_time += (end_time - start_time) 
+                    obj_num +=1
+
 
                     chunk_index += 1
             else:
@@ -73,6 +80,8 @@ def process_file(file_path, ioctx):
                 total_write_time += (end_time - start_time) 
 
 def measure_read_performance(cluster_conf, pool_name):
+    global obj_num
+    print("开始测量读取性能：")
     try:
         # 连接到 Ceph 集群
         cluster = rados.Rados(conffile=cluster_conf)
@@ -91,7 +100,13 @@ def measure_read_performance(cluster_conf, pool_name):
         total_read_bytes = 0
 
         # 遍历池中的所有对象并测量读取时间
+        obj_read = 0
         for obj in ioctx.list_objects():
+            
+            # 已经读取了 obj_read / obj_num 个对象
+            obj_read += 1   
+            # print(f"已经读取了总量 {obj_read} / {obj_num} 的对象")
+            
             object_name = obj.key
             try:
                 start_time = time.time()
@@ -128,6 +143,8 @@ def measure_read_performance(cluster_conf, pool_name):
         # 关闭集群连接
         cluster.shutdown()
 
+    return throughput
+
 def delete_all_objects(pool_name):
     try:
         # 连接 Ceph 集群
@@ -154,25 +171,25 @@ def delete_all_objects(pool_name):
 
 if __name__ == '__main__':    
     #所有目录 写性能测试
-    # directory_to_scan = '/home/cyf/ssd/benchmark_log_files/'  # 替换为您要扫描的目录路径
-    # workloads = traverse_directory_one_layer(directory_to_scan)
-    # workloads = sorted(workloads)
+    directory_to_scan = '/home/cyf/datasetsSmartCE_sample'  # 替换为您要扫描的目录路径
+    workloads = traverse_directory_one_layer(directory_to_scan)
+    workloads = sorted(workloads)
 
-    # delete_all_objects('po1')
+    delete_all_objects('po1')
+    delete_all_objects('po2')
     
-    # for workload in workloads:
-    #     traverse_directory_write(workload, '/etc/ceph/ceph.conf', 'po1') 
-    #     print(f"{workload} total write time: {total_write_time:.6f} s")
+    for workload in workloads:
+        traverse_directory_write(workload, '/etc/ceph/ceph.conf', 'po1') 
+        throughput1 = measure_read_performance('/etc/ceph/ceph.conf', 'po1')
 
-    #     measure_read_performance('/etc/ceph/ceph.conf', 'po1')
-    
-    #     delete_all_objects('po1')
-    #     total_write_time = 0
-    #     total_read_time = 0
-    
-    # 单个目录
-    workload = '/home/cyf/ssd/benchmark_log_files/Zookeeper'
-    traverse_directory_write(workload, '/etc/ceph/ceph.conf', 'po1') 
-    print(f"{workload} total write time: {total_write_time:.6f} s")
-    measure_read_performance('/etc/ceph/ceph.conf', 'po1')
+        traverse_directory_write(workload, '/etc/ceph/ceph.conf', 'po2') 
+        throughput2 = measure_read_performance('/etc/ceph/ceph.conf', 'po2')
 
+        print(throughput1, throughput2)
+        performance_lost = (throughput2 - throughput1) / throughput2
+        print(f"性能损失：{performance_lost*100:.2f} %")
+
+        delete_all_objects('po1')
+        delete_all_objects('po2')
+        total_write_time = 0
+        total_read_time = 0

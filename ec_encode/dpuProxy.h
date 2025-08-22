@@ -96,6 +96,7 @@ private:
     doca_error_t* ec_task_result_batch;
     union doca_data* task_user_data_ec_batch;
     int ec_batch_process_time;
+    int ec_batch_memcpy_time;
 
 public:
     int copy_time_us;
@@ -131,6 +132,8 @@ public:
     void encode_chunks(char* input_data, int block_size, int k, int batch_size);
     void getECTaskResultBatch(int i, char** coding, int block_size);
     int getECBatchProcessTime();
+    int getECBatchMemcpyTime();
+    
 
 private:
     void clearSHA();

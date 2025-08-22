@@ -53,9 +53,16 @@ def monitor_recovery_duration(conf_path, check_interval=0.1):
                     print(f"  {state['state_name']}: {state['count']}")
             elif is_active_clean_only and last_status == 'recovering':
                 # 恢复完成
+                recover_data_size = 4*1024*1024*1024
                 recovery_duration = (current_time - recovery_start).total_seconds()
                 last_status = 'active+clean'
-                print(f"[{current_time}] 集群恢复完成，持续时间: {recovery_duration:.2f}秒")
+                # 恢复速度
+                recovery_speed = recover_data_size / recovery_duration
+                print("\n恢复完成，持续时间:")
+                print(f"  {recovery_duration:.2f}秒")
+                print("恢复速度:")
+                print(f"  {recovery_speed:.2f}Bytes/s")
+                # print(f"[{current_time}] 集群恢复完成，持续时间: {recovery_duration:.2f}秒")
                 print("当前PG状态分布:")
                 for state in pg_status:
                     print(f"  {state['state_name']}: {state['count']}")

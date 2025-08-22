@@ -266,4 +266,5 @@ void decompress_lz4_stream_error_callback(struct doca_compress_task_decompress_l
 					  union doca_data task_user_data,
 					  union doca_data ctx_user_data);
 
+
 #endif /* COMPRESS_COMMON_H_ */

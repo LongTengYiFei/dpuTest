@@ -385,6 +385,7 @@ doca_error_t encode(int k, int m, int block_size)
 	struct timeval start_time, end_time;
 	uint64_t matrix_create_time_us = 0;
 	uint64_t doca_pure_encode_time = 0;
+	uint64_t memcpy_time = 0;
 	uint64_t copy_src_time_us = 0;
 	uint64_t copy_dst_time_us = 0;
 
@@ -547,7 +548,8 @@ doca_error_t encode(int k, int m, int block_size)
 		
 	// 打印统计信息
 	printf("matrix create time %d us\n", matrix_create_time_us);
-	printf("pure encode time %d us\n", doca_pure_encode_time);
+	printf("raw encode time %d us\n", doca_pure_encode_time);
+	printf("raw encode time %d us\n", doca_pure_encode_time);
 
 	return callback_result;
 }

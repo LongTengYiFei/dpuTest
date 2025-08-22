@@ -6,7 +6,6 @@
 #include <jerasure/reed_sol.h>
 #include <jerasure/cauchy.h>
 
-
 #include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -23,25 +22,7 @@
 
 using namespace std;
 
-void writeBlocks(string blocks_dir, bool isDataBlock, int blocks_num, char** blocks, int block_size){
-    string block_file_name_prefix;
-    if(isDataBlock){
-        block_file_name_prefix = "data_block_";
-    }else{
-        block_file_name_prefix = "code_block_";
-    }
-
-    string block_file_name = blocks_dir + "/" + block_file_name_prefix;
-    for(int i=0; i<=blocks_num-1; i++){
-        block_file_name.push_back(i + '0');
-        int fd = open(block_file_name.c_str(), O_RDWR | O_CREAT | O_APPEND, 0644);
-        write(fd, blocks[i], block_size);
-        close(fd);
-        block_file_name.pop_back();
-    }
-}
-
-void cpuTest(string input_file_path, int k, int m, int w, int block_size){
+void cpuEncode(int k, int m, int block_size){
     struct timeval start_time, end_time;
     gettimeofday(&start_time, 0);
     int *matrix_RSvandermode = reed_sol_vandermonde_coding_matrix(k, m, W);
@@ -50,18 +31,13 @@ void cpuTest(string input_file_path, int k, int m, int w, int block_size){
                      end_time.tv_usec - start_time.tv_usec;
     // printf("matrix gen time %d us\n", time_cost_gen);
 
-    int fd = open(input_file_path.c_str(), O_RDONLY);
-    lseek(fd, 0, SEEK_END);
-    size_t data_size = lseek(fd, 0, SEEK_CUR);
-    lseek(fd, 0, SEEK_SET);
-    if(data_size % (k * block_size)){
-        cout<< "文件长度不是K*block size的整数倍" <<endl;
-        cout<< "k = " << k <<endl;
-        cout<< "block size = " << block_size <<endl;
-        return ;
-    }
+    int data_size = k*block_size;
     char *input_data = (char *)malloc(data_size);
-    read(fd, input_data, data_size);
+
+    // write random data
+    for(int i=0; i<data_size; i++){
+        input_data[i] = rand() % 256;
+    }
 
     // allocate data block and code block space
     int stripe_size = block_size * k;
@@ -87,7 +63,7 @@ void cpuTest(string input_file_path, int k, int m, int w, int block_size){
         }
 
         gettimeofday(&start_time, 0);
-        jerasure_matrix_encode(k, m, w, matrix_RSvandermode, data_blocks, coding_blocks, block_size);
+        jerasure_matrix_encode(k, m, W, matrix_RSvandermode, data_blocks, coding_blocks, block_size);
         gettimeofday(&end_time, 0);
         cpu_encoding_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
                         end_time.tv_usec - start_time.tv_usec;
@@ -140,96 +116,36 @@ void cpuTest(string input_file_path, int k, int m, int w, int block_size){
 
 }
 
-void dpuEncodeTest(string input_file_path, int k, int m, int w, int block_size){
-    struct timeval start_time, end_time;
-    // DPU prepare
-    DPUProxy *dpu;
-    dpu = new DPUProxy();
-    gettimeofday(&start_time, 0);
-    dpu->initEC(k, m, block_size);
-    gettimeofday(&end_time, 0);
-    int init_ec_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
-                        end_time.tv_usec - start_time.tv_usec;
-    printf("DPU accelerator init time %d us\n", init_ec_time);
-    
-    // file prepare
-    int fd = open(input_file_path.c_str(), O_RDONLY);
-    lseek(fd, 0, SEEK_END);
-    size_t data_size = lseek(fd, 0, SEEK_CUR);
-    if(data_size % (k * block_size)){
-        cout<< "文件长度不是K*block size的整数倍" <<endl;
-        cout<< "k = " << k <<endl;
-        cout<< "block size = " << block_size <<endl;
-        return ;
-    }
-    char *input_data = (char *)malloc(data_size);
-    read(fd, input_data, data_size);
-
-    // allocate data block and code block space
-    int stripe_size = block_size * k;
-    char **data_blocks = (char **)malloc(k * sizeof(char *));
-    char **coding_blocks = (char **)malloc(m* sizeof(char *));
-    for (int i = 0; i < k; i++) 
-        data_blocks[i] = (char *)malloc(block_size);
-    for (int i = 0; i < m; i++) 
-        coding_blocks[i] = (char *)malloc(block_size);
-
-    int dpu_encoding_time = 0;
-    int data_off=0;
-    for(int i=0; i<=data_size/stripe_size -1;i++){
-        // prepare stripe
-        for (int j = 0; j < K; j++) {
-            memcpy(data_blocks[j], input_data + data_off, block_size);
-            data_off += block_size;
-        }
-
-        // encode stripe
-        gettimeofday(&start_time, 0);
-        dpu->encode_chunks(data_blocks, coding_blocks, block_size);
-        gettimeofday(&end_time, 0);
-        dpu_encoding_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
-                        end_time.tv_usec - start_time.tv_usec;
-
-        writeBlocks("./dataBlocks", true, k, data_blocks, block_size); 
-        writeBlocks("./codeBlocks", false, m, coding_blocks, block_size);        
-    }
-    
-    printf("DPU accelerator total encoding time %d us\n", dpu_encoding_time);
-    float dpu_real_thr = ((float)data_size / MB) / ((float)dpu_encoding_time / 1000000);
-    printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", dpu_real_thr);
-}
-
-void dpuEncodeTestBatch(string input_file_path, int k, int m, int w, int block_size, int batch_size){
+void dpuEncodeBatch(int k, int m, int block_size, int batch_size){
     struct timeval start_time, end_time;
     // DPU prepare
     DPUProxy *dpu;
     dpu = new DPUProxy();
     dpu->initECBatch(k, m, block_size, batch_size);
     
-    // file prepare
-    int fd = open(input_file_path.c_str(), O_RDONLY);
-    lseek(fd, 0, SEEK_END);
-    long data_size = lseek(fd, 0, SEEK_CUR);
-    if(data_size % (long)(k * block_size)){
-        cout<< "文件长度不是K*block size的整数倍" <<endl;
-        cout<< "k = " << k <<endl;
-        cout<< "block size = " << block_size <<endl;
-        return ;
-    }
+    int data_size = k*block_size*batch_size;
     char *input_data = (char *)malloc(data_size);
-    read(fd, input_data, data_size);
+
+    // write random data
+    for(int i=0; i<data_size; i++){
+        input_data[i] = rand();
+    }
 
     // allocate data block and code block space
     long stripe_size = block_size * k;
 
-    for(int i=0; i<=data_size/stripe_size/batch_size -1;i++){
+    for(int i=0; i<=data_size/stripe_size/batch_size -1; i++){
         dpu->encode_chunks(input_data + batch_size*stripe_size, block_size, k, batch_size);
     }
 
-    float dpu_real_thr = ((float)data_size / MB) / ((float)dpu->getECBatchProcessTime() / 1000000);
-    printf("data size %d MB\n", data_size / MB);
-    printf("DPU accelerator encoding throughput REAL %.2f MB/s\n", dpu_real_thr);
-    printf("DPU accelerator total encoding time %d us\n", dpu->getECBatchProcessTime());
+    float DOCA_Raw_Perf = ((float)data_size / MB) / ((float)dpu->getECBatchProcessTime() / 1000000);
+    float DOCA_Proxy_Perf = 
+        ((float)data_size / MB) / (((float)dpu->getECBatchProcessTime() + (float)dpu->getECBatchMemcpyTime()) / 1000000);
+    printf("Data Size %d MB\n", data_size / MB);
+    printf("DOCA Raw Encode Performance %.2f MB/s\n", DOCA_Raw_Perf);
+    printf("DOCA Proxy Encode Performance %.2f MB/s\n", DOCA_Proxy_Perf);
+    printf("DOCA Polling Encoding Time %d us\n", dpu->getECBatchProcessTime());
+    printf("DOCA Memcpy Encoding Time %d us\n", dpu->getECBatchMemcpyTime());
 }
 
 
@@ -274,21 +190,24 @@ int size_convert(char* s) {
 }
 
 int main(int argc, char** argv) {
-    char* file_name = argv[1];
-    int k = atoi(argv[3]);
-    int m = atoi(argv[4]);
-    int block_size = size_convert(argv[5]);
-    int batch_size = atoi(argv[6]);
+    char* method = argv[1];
+    int k = atoi(argv[2]);
+    int m = atoi(argv[3]);
+    int block_size = size_convert(argv[4]);
 
-    if(strcmp(argv[2], "dpu") == 0){
-        dpuEncodeTest(file_name, K, M, W, BLOCK_SIZE);
-    }else if (strcmp(argv[2], "dpuBatch") == 0){
-        // batch处理，batch大小32，k=4，m=2；
-        // ./proxy_test dpuBatch 4 2 1MB 32
-        dpuEncodeTestBatch(file_name, k, m, W, block_size, batch_size);
-    }else if(strcmp(argv[2], "cpu") == 0){
-        // ./proxy_test dpuBatch 4 2 1MB 32
-        cpuTest(file_name, k, m, W, block_size);
+    int batch_size;
+    if(argv[5])
+        batch_size = atoi(argv[5]);
+
+    if(strcmp(method, "dpuEncodeBatch") == 0){
+        // batch处理，k=4，m=2，block大小1MB，batch大小32；
+        // 使用方法：./proxy_test dpuBatch 4 2 1MB 32
+        dpuEncodeBatch(k, m, block_size, batch_size);
+    }else if(strcmp(method, "cpuEncode") == 0){
+        // 使用方法：./proxy_test cpu 4 2 1MB
+        cpuEncode(k, m, block_size);
+    }else {
+        printf("Unknown method\n");
     }
     
     return 0;

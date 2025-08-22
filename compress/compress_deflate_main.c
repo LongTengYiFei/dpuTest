@@ -53,6 +53,7 @@ struct compress_deflate_result {
 };
 
 // stat
+unsigned long doca_copy_time = 0;
 unsigned long doca_compress_time_us = 0;
 unsigned long doca_decompress_time_us = 0;
 unsigned long cpu_compress_time_us = 0;
@@ -369,7 +370,8 @@ unsigned long cpu_dst_len_decompress;
 unsigned long cpu_src_len_decompress;
 int cpu_decompress_dst_buffer_size = 8*1024*1024;
 int cpu_compress_dst_buffer_size = 4*1024*1024;
-int cpu_read_block_size = 2*1024*1024;
+int cpu_read_block_size = 64*1024;
+unsigned long copy_size = 0;
 
 #define MB (1024*1024)
 void initBufferCPU(int _batch_size, int _blob_size){
@@ -413,8 +415,17 @@ doca_error_t test3(const char *file_name, int _batch_size, int _blob_size){
 		*/
 		// 多准备点空间，因为压缩率低的场景，可能会越压缩越大。
 		// _blob_size*2
-		for(int i=0; i<=_batch_size-1;i++)
-			memcpy(src_buffer_decompress+i*_blob_size*2, cpu_dst_buffer_compress[i], blob_size*2);
+
+		gettimeofday(&start_time, NULL);	
+		for(int i=0; i<=_batch_size-1;i++){
+			// 模拟拷贝出来结果的时间
+			memcpy(src_buffer_decompress+i*_blob_size*2, cpu_dst_buffer_compress[i], blob_size);
+			
+			// 可能会覆盖刚才拷贝的，真实拷贝进去的时间
+			memcpy(src_buffer_decompress+i*_blob_size*2, cpu_dst_buffer_compress[i], compressed_lengths[i]); 
+		}
+		gettimeofday(&end_time, NULL);
+		doca_copy_time += (end_time.tv_sec - start_time.tv_sec) * 1000000 + (end_time.tv_usec - start_time.tv_usec);
 
 		gettimeofday(&start_time, NULL);
 		for(int i=0; i<=batch_size-1; i++){
@@ -489,8 +500,17 @@ void test2(const char *file_name){
 }
 
 void printStat(){
+	printf("copy size %ld\n", copy_size);
+	printf("CPU decompress time %ld us\n", cpu_decompress_time_us);
+	printf("DOCA decompress time %ld us\n", doca_decompress_time_us);
+	printf("DOCA copy time %ld us\n", doca_copy_time);
 	printf("compress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_compress_time_us / 1000000.0));
-	printf("decompress speed %.2f MB/s \n", total_size_before_compression / 1024.0 / 1024.0 / (doca_decompress_time_us / 1000000.0));
+	
+	printf("DOCA Raw decompress speed %.2f MB/s \n", 
+	total_size_before_compression / 1024.0 / 1024.0 / (doca_decompress_time_us / 1000000.0));
+	printf("DOCA Proxy decompress speed %.2f MB/s \n", 
+	total_size_before_compression / 1024.0 / 1024.0 / ((doca_decompress_time_us+doca_copy_time) / 1000000.0));
+	
 	printf("total size before compression: %.2f MB\n", total_size_before_compression / 1024.0 / 1024.0);
 	printf("total size after compression: %.2f MB\n", total_size_after_compression / 1024.0 / 1024.0);
 	printf("total size after decompression: %.2f MB\n", total_size_after_decompression / 1024.0 / 1024.0);
@@ -500,6 +520,7 @@ void printStat(){
 void resetStat(){
 	doca_compress_time_us = 0;
 	doca_decompress_time_us = 0;
+	doca_copy_time = 0;
 	total_size_before_compression = 0;
 	total_size_after_compression = 0;
 	total_size_after_decompression = 0;
@@ -539,11 +560,11 @@ void traverseDir(const char *base_path) {
         // 如果是文件且以 ".log" 结尾，打印文件路径
         else if (S_ISREG(info.st_mode)) {
             const char *ext = strrchr(entry->d_name, '.');
-            // if (ext && strcmp(ext, ".log") == 0) {
-			// 	test3(path, batch_size, blob_size);
-            //     // compressFileDOCA(path, batch_size, blob_size);
-            // }
-			test3(path, batch_size, blob_size);
+            if (ext && strcmp(ext, ".log") == 0) {
+				test3(path, batch_size, blob_size);
+            }else if (ext && strcmp(ext, ".fits") == 0) {
+				test3(path, batch_size, blob_size);
+            }
         }
     }
 
