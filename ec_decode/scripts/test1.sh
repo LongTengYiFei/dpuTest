@@ -1,7 +1,9 @@
 run_time=10
 batch_sizes=(1 2 4 8 16 32)
-erasure_count=4
+erasure_count=2
 output_file="./result1.txt"
+k=4
+m=2
 
 # 清空输出文件
 > "$output_file"
@@ -16,7 +18,7 @@ for batch_size in "${batch_sizes[@]}"; do
     
     for x in $(seq 1 $run_time); do
         # 运行测试并提取时间
-        result=$(../doca_ec_test decode_batch 8 4 1MB $batch_size $erasure_count | grep -E "copy src time|copy dst time")
+        result=$(../doca_ec_test decode_batch $k $m 1MB $batch_size $erasure_count | grep -E "copy src time|copy dst time")
         
         # 提取具体时间值（第4列）
         src_time=$(echo "$result" | grep "copy src time" | awk '{print $4}')
