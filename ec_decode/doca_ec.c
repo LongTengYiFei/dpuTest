@@ -813,12 +813,12 @@ doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int eras
 	// 统计信息
 	struct timeval start_time, end_time;
 	uint64_t matrix_create_time_us = 0;
-	uint64_t doca_pure_decode_time = 0;
+	uint64_t doca_raw_decode_time = 0;
 	uint64_t copy_src_time_us = 0;
 	uint64_t copy_dst_time_us = 0;
 	uint64_t set_mmap_time_us = 0;
 	uint64_t task_init_time_us = 0;
-	uint64_t test_time_us = 0;
+	uint64_t reset_time_us = 0;
 
 	uint32_t max_bufs = 2;
 	doca_error_t result;
@@ -1019,7 +1019,7 @@ doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int eras
 			nanosleep(&ts, &ts);
 	}
 	gettimeofday(&end_time, 0);
-	doca_pure_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	doca_raw_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	gettimeofday(&start_time, 0);
@@ -1027,7 +1027,7 @@ doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int eras
 		doca_buf_reset_data_len(ec_dst_doca_buf_batch[i]);
 	}
 	gettimeofday(&end_time, 0);
-	test_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
+	reset_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
 	gettimeofday(&start_time, 0);
@@ -1038,13 +1038,19 @@ doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int eras
 	copy_dst_time_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 + 
         end_time.tv_usec - start_time.tv_usec;
 
+	printf("Main Statistics:\n");
 	printf("copy src time %ld us\n", copy_src_time_us);
 	printf("copy dst time %ld us\n", copy_dst_time_us);
-	printf("copy pure decode time %ld us\n", doca_pure_decode_time);
+	printf("doca Raw decode time %ld us\n", doca_raw_decode_time);
+
+	uint64_t doca_proxy_decode_time = doca_raw_decode_time + copy_src_time_us + copy_dst_time_us;
+	printf("doca Proxy decode time %ld us\n", doca_proxy_decode_time);
+
+	printf("\nOther Statistics:\n");
 	printf("matrix create time %ld us\n", matrix_create_time_us);
 	printf("set mmap time %ld us\n", set_mmap_time_us);
 	printf("task init time %ld us\n", task_init_time_us);
-	printf("test time %ld us\n", test_time_us);
+	printf("reset time %ld us\n", reset_time_us);
 	return DOCA_SUCCESS;
 }
 
@@ -1111,7 +1117,7 @@ int main(int argc, char** argv) {
     }else if (strcmp(task_type, "decode_batch") == 0){
 		/*
 			使用方法
-			./doca_ec_test decode_batch 4 2 1MB 32
+			./doca_ec_test decode_batch 8 4 1MB 32 4
 		*/
 		decode_batch(k, m, block_size, batch_size, erasures_count);
     }
