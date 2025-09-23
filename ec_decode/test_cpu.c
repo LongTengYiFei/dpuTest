@@ -182,6 +182,7 @@ int main(int argc, char** argv) {
                                end_time.tv_usec - start_time.tv_usec;
         printf("One stripe matrix decoding time %d us, k=%d, m=%d, W=%d, erasure count = %d\n", 
                 time_cost_decoding, k, m, W, erasure_count);
+        printf("One stripe recover speed %.2f MB/s\n", (float)m * block_size / (time_cost_decoding / 1000000.0) / 1024.0 / 1024.0);
     } else {
         fprintf(stderr, "Error: Decoding failed\n");
     }

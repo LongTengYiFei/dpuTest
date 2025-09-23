@@ -1009,6 +1009,10 @@ doca_error_t decode_batch(int k, int m, int block_size, int batch_size, int eras
 	gettimeofday(&start_time, 0);
 	for(int i=0; i<=batch_size-1; i++){
 		result = doca_task_submit(ec_task_batch[i]);
+		if(result != DOCA_SUCCESS){
+			printf("submit error\n");
+			exit(-1);
+		}
 	}
 	state->num_remaining_tasks = batch_size;
 	state->run_pe_progress = true;
