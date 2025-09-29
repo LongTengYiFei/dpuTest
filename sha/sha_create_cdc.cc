@@ -24,6 +24,7 @@
 using namespace std;
 
 DOCA_LOG_REGISTER(SHA_CREATE_CDC);
+#define MB (1024*1024)
 
 // predefined Gear Mask
 uint64_t GEARv2[256] = {
@@ -119,9 +120,9 @@ uint64_t GEARv2[256] = {
 //same to FastCDC
 uint64_t Mask15 = 0x0003590703530000LL;
 uint64_t Mask11 = 0x0000d90003530000LL;
-int avg_chunk_size = 4*1024;
-int min_chunk_size = avg_chunk_size / 4;
-int max_chunk_size = avg_chunk_size * 8;
+int avg_chunk_size;
+int min_chunk_size;
+int max_chunk_size;
 
 struct sha_resources {
 	struct program_core_objects state; /* Core objects that manage our "state" */
@@ -179,13 +180,15 @@ int fastcdc(unsigned char* p, int n){
     return n;
 }
 
-extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
+extern "C" doca_error_t sha_create_CDC(char *data, int total_size, int batch_size, int avg_chunk_size_)
 {
 	// 固定chunk数量的CDC
 	// chunk数量最好是2的指数，不然后续不好log
-	int batch_chunk_num = 16;
-
-	size_t src_buffer_len = max_chunk_size * batch_chunk_num;
+	avg_chunk_size = avg_chunk_size_;
+	max_chunk_size = avg_chunk_size*8; // fastcdc惯例；
+	min_chunk_size = avg_chunk_size/4;
+	
+	size_t src_buffer_len = max_chunk_size * batch_size;
 	char *src_buffer = (char*)malloc(src_buffer_len);
 
 	struct sha_resources resources;
@@ -195,12 +198,12 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 	union doca_data ctx_user_data = {0};
 	union doca_data task_user_data = {0};
 	
-	struct doca_buf **src_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * batch_chunk_num);
-	struct doca_buf **dst_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * batch_chunk_num);
-	struct doca_sha_task_hash **sha_hash_task = (struct doca_sha_task_hash**)malloc(sizeof(struct doca_sha_task_hash*) * batch_chunk_num);
-	struct doca_task **task = (struct doca_task**)malloc(sizeof(struct doca_task*) * batch_chunk_num);
+	struct doca_buf **src_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * batch_size);
+	struct doca_buf **dst_doca_buf = (struct doca_buf **)malloc(sizeof(struct doca_buf *) * batch_size);
+	struct doca_sha_task_hash **sha_hash_task = (struct doca_sha_task_hash**)malloc(sizeof(struct doca_sha_task_hash*) * batch_size);
+	struct doca_task **task = (struct doca_task**)malloc(sizeof(struct doca_task*) * batch_size);
 
-	uint32_t max_bufs = 2*batch_chunk_num; 
+	uint32_t max_bufs = 2*batch_size; 
 	uint32_t min_dst_sha_buffer_size;
 	uint64_t max_source_buffer_size;
 
@@ -263,7 +266,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 		return result;
 	}
 
-	int LOG_NUM = log(batch_chunk_num)/log(2);
+	int LOG_NUM = log(batch_size)/log(2);
 	result = doca_sha_task_hash_set_conf(resources.sha_ctx,
 					    sha_hash_completed_callback,
 					    sha_hash_error_callback,
@@ -283,7 +286,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 
 	// SHA结果内存准备
 	// 将所有结果并排放在一起
-	int dest_buf_size = min_dst_sha_buffer_size * batch_chunk_num;
+	int dest_buf_size = min_dst_sha_buffer_size * batch_size;
 	dst_buffer = (uint8_t*)calloc(1, dest_buf_size);
 	if (dst_buffer == NULL) {
 		DOCA_LOG_ERR("Failed to allocate memory");
@@ -329,7 +332,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 
 	// 首次分配
 	// 源和目标
-	for(int i=0; i<=batch_chunk_num-1; i++){
+	for(int i=0; i<=batch_size-1; i++){
 		result = doca_buf_inventory_buf_get_by_data(state->buf_inv,
 								state->src_mmap,
 								src_buffer,
@@ -355,7 +358,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 	}
 
 	/* Include tasks counter in user data of context to be decremented in callbacks */
-	resources.num_remaining_tasks = batch_chunk_num;
+	resources.num_remaining_tasks = batch_size;
 	resources.run_pe_progress = true;
 	ctx_user_data.ptr = &resources;
 	doca_ctx_set_user_data(state->ctx, ctx_user_data);
@@ -371,7 +374,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 	task_user_data.ptr = &task_result;
 
     // 先把任务准备好
-    for(int i=0; i<=batch_chunk_num-1; i++){
+    for(int i=0; i<=batch_size-1; i++){
         result = doca_sha_task_hash_alloc_init(resources.sha_ctx,
                     DOCA_SHA_ALGORITHM_SHA1,
                     src_doca_buf[i],
@@ -411,8 +414,11 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
     int rest_chunk_num = chunks.size();
     int off2 = 0;
 	vector<pair<int, int>> batch_chunks;
+
+	struct timeval start, end;
+	uint64_t hashing_time_us=0;
     while(rest_chunk_num){
-        int now_batch = rest_chunk_num >= batch_chunk_num ? batch_chunk_num : rest_chunk_num;
+        int now_batch = rest_chunk_num >= batch_size ? batch_size : rest_chunk_num;
 		resources.num_remaining_tasks = now_batch;
 		resources.run_pe_progress = true;
 		// move
@@ -425,6 +431,7 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
             rest_chunk_num --;
 		}
 
+		gettimeofday(&start, NULL);
         // submit
         for(int i=0; i<=now_batch-1; i++){
             doca_buf_set_data(src_doca_buf[i], src_buffer+batch_chunks[i].first, batch_chunks[i].second);
@@ -435,8 +442,6 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 			}
 		}
 
-
-
         // waiting
         while (resources.run_pe_progress) {
 			if (doca_pe_progress(state->pe) == 0)
@@ -444,41 +449,46 @@ extern "C" doca_error_t sha_create_CDC(char *data, int total_size)
 				;
 		}
 
-        // print result
-		unsigned char sha1_verify[20];
-		for(int i=0; i<=now_batch-1; i++){
-			result = doca_buf_get_data_len(dst_doca_buf[i], &hash_length);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to get the data length of DOCA buffer: %s", doca_error_get_descr(result));
-				return result;
-			}
 
-			result = doca_buf_get_data(dst_doca_buf[i], (void **)&hash_buffer_binary);
-			if (result != DOCA_SUCCESS) {
-				DOCA_LOG_ERR("Failed to get the data of DOCA buffer: %s", doca_error_get_descr(result));
-				return result;
-			}
+        // // print result
+		// unsigned char sha1_verify[20];
+		// for(int i=0; i<=now_batch-1; i++){
+		// 	result = doca_buf_get_data_len(dst_doca_buf[i], &hash_length);
+		// 	if (result != DOCA_SUCCESS) {
+		// 		DOCA_LOG_ERR("Failed to get the data length of DOCA buffer: %s", doca_error_get_descr(result));
+		// 		return result;
+		// 	}
 
-			/* Convert the hex format to char format */
-			for (int j = 0; j < hash_length; j++)
-				snprintf(hash_buffer_human_string + (2 * j), 3, "%02x", hash_buffer_binary[j]);
-			DOCA_LOG_INFO("SHA1 output is: %s", hash_buffer_human_string);
+		// 	result = doca_buf_get_data(dst_doca_buf[i], (void **)&hash_buffer_binary);
+		// 	if (result != DOCA_SUCCESS) {
+		// 		DOCA_LOG_ERR("Failed to get the data of DOCA buffer: %s", doca_error_get_descr(result));
+		// 		return result;
+		// 	}
 
-			// cpu sha verify
-			SHA1((unsigned char*)src_buffer+batch_chunks[i].first , batch_chunks[i].second, sha1_verify);
-			for (int j = 0; j < hash_length; j++)
-				snprintf(hash_buffer_human_string + (2 * j), 3, "%02x", sha1_verify[j]);
-			DOCA_LOG_INFO("SHA1 verify output is: %s", hash_buffer_human_string);
-		}
+		// 	/* Convert the hex format to char format */
+		// 	for (int j = 0; j < hash_length; j++)
+		// 		snprintf(hash_buffer_human_string + (2 * j), 3, "%02x", hash_buffer_binary[j]);
+		// 	DOCA_LOG_INFO("SHA1 output is: %s", hash_buffer_human_string);
+
+		// 	// cpu sha verify
+		// 	SHA1((unsigned char*)src_buffer+batch_chunks[i].first , batch_chunks[i].second, sha1_verify);
+		// 	for (int j = 0; j < hash_length; j++)
+		// 		snprintf(hash_buffer_human_string + (2 * j), 3, "%02x", sha1_verify[j]);
+		// 	DOCA_LOG_INFO("SHA1 verify output is: %s", hash_buffer_human_string);
+		// }
 
         // reset
         for(int i=0; i<=now_batch-1; i++){
 			doca_buf_reset_data_len(dst_doca_buf[i]);
 		}
 
-
 		batch_chunks.clear();
+		gettimeofday(&end, NULL);
+		hashing_time_us += (end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec;
     }
+
+	float hashing_speed = ((float)total_size / MB) / ((float)hashing_time_us / 1000000.0);
+	printf("hashing speed %.2f MB/s\n", hashing_speed);
 
 	return DOCA_SUCCESS;
 }

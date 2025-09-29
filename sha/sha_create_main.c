@@ -35,7 +35,7 @@ DOCA_LOG_REGISTER(SHA_CREATE::MAIN);
 
 /* Sample's Logic */
 doca_error_t sha_create(char *src_buffer, int unit_size, int batch_size, int batch_num);
-doca_error_t sha_create_CDC(char *src_buffer, int total_size);
+doca_error_t sha_create_CDC(char *src_buffer, int total_size, int batch_size, int average_chunk_size_);
 
 /*
  * ARGP Callback - Handle user data parameter
@@ -102,24 +102,15 @@ int main(int argc, char **argv)
 	
 	// args
 	// doca 更新后，一个满队列2MB
-	int full_queue = (2*1024*1024);
-	int unit_size = 4*1024;
-	int batch_size = full_queue / unit_size;
+	int average_chunk_size = 4*1024;
+	int batch_size = 64;
 	int total_size = 4*MB;
-	int batch_num = total_size / full_queue;
+	int batch_num = total_size / (average_chunk_size * batch_size);
 
-	// random data gen
-	// 一个满队列的数据多算几遍，就不真的生成1GB数据了
-	int real_data_size = unit_size * batch_size;
 	char* data = (char*)malloc(total_size);
-	for(int i=0; i<=real_data_size-1; i++){
+	for(int i=0; i<=total_size-1; i++){
 		data[i] = 'b' + rand() % 26;
 	}
-
-	char* file_name = "/home/cyf/ssd0/linuxVersion_TAR/v6.0.tar";
-	// open file
-	int fd = open(file_name, O_RDONLY, 0777);
-	int n_read = read(fd, data, total_size);
 
 	/* Register a logger backend */
 	result = doca_log_backend_create_standard();
@@ -155,7 +146,7 @@ int main(int argc, char **argv)
 	}
 
 	// result = sha_create(data, unit_size, batch_size, batch_num);
-	result = sha_create_CDC(data, total_size);
+	result = sha_create_CDC(data, total_size, batch_size, average_chunk_size);
 	return 0;
 	
 	if (result != DOCA_SUCCESS) {
