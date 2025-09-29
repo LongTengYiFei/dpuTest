@@ -8,6 +8,7 @@ INC = -I/opt/mellanox/doca/include \
 
 LIBS = -ldoca_sha -ldoca_common -ldoca_argp -lm \
 	   -L/opt/mellanox/doca/lib/x86_64-linux-gnu/
+#      -L/opt/mellanox/doca/lib/aarch64-linux-gnu/
 
 doca_sha_test:
 	gcc $(SRC) $(INC) $(LIBS) -o doca_sha_test -g -lstdc++ -lcrypto
