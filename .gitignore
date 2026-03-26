@@ -6,3 +6,5 @@ a.out
 doca_test
 arm_deflate_test
 arm_sha_test
+ec_encode/proxy_test
+ec_decode/doca_ec_test
