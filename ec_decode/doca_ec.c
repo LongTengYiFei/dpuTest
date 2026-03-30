@@ -601,6 +601,8 @@ static void ec_recover_error_callback(struct doca_ec_task_recover *recover_task,
 	(void)ctx_user_data;
 
 	ec_task_error(doca_ec_task_recover_as_task(recover_task), task_data->task_status, task_data->cb_result);
+
+	printf("ec recover error callback, rest task num %d\n", ((struct ec_sample_objects *)ctx_user_data.ptr)->num_remaining_tasks);
 }
 
 /*
@@ -619,7 +621,7 @@ static void ec_recover_completed_callback(struct doca_ec_task_recover *recover_t
 	if (state->num_remaining_tasks == 0)
 		state->run_pe_progress = false;
 
-	//printf("ec recover complete callback, rest task num %d\n", state->num_remaining_tasks);
+	printf("ec recover complete callback, rest task num %d\n", state->num_remaining_tasks);
 }
 
 static void ec_recover_completed_callback_memcpy(struct doca_ec_task_recover *recover_task,
@@ -634,14 +636,14 @@ static void ec_recover_completed_callback_memcpy(struct doca_ec_task_recover *re
 		char* app_dst = task_data->app_dst_buffer + (size_t)task_data->batch_index * (size_t)task_data->dst_size_seg;
 		char *doca_dst = task_data->dst_buffer + (size_t)task_data->batch_index * (size_t)task_data->dst_size_seg;
 		memcpy(app_dst, doca_dst, (size_t)task_data->dst_size_seg);
-		free(task_data);
+		//free(task_data);
 	}
 
 	--state->num_remaining_tasks;
 	if (state->num_remaining_tasks == 0)
 		state->run_pe_progress = false;
 
-	printf("ec recover complete callback, rest task num %d\n", state->num_remaining_tasks);
+	//printf("ec recover complete callback memcpy, rest task num %d\n", state->num_remaining_tasks);
 }
 
 /*
@@ -860,7 +862,8 @@ static void *ec_decode_submit_thread(void *arg)
 {
 	struct decode_batch_submit_data *data = (struct decode_batch_submit_data *)arg;
 	for (int i = 0; i < data->batch_size; i++) {
-		memcpy(data->src_buffer + i * data->src_size_seg, data->src_seg, data->src_size_seg);
+		memcpy(data->src_buffer + i * data->src_size_seg, data->src_seg + i * data->src_size_seg, data->src_size_seg);
+		//memcpy(data->src_buffer + i * data->src_size_seg, data->src_seg , data->src_size_seg);
 
 		doca_error_t result = doca_task_submit(data->ec_task_batch[i]);
 		if (result != DOCA_SUCCESS) {
@@ -874,8 +877,10 @@ static void *ec_decode_submit_thread(void *arg)
 		  	所以这里提交完任务后就直接增加剩余任务数，等主线程调用doca_pe_progress时就能正确地知道还有多少任务在等待完成。
 		*/
 		__sync_fetch_and_add(&data->state->num_remaining_tasks, 1);
+		data->state->run_pe_progress = true;
+		
 	}
-	data->state->run_pe_progress = true;
+
 	data->submit_result = DOCA_SUCCESS;
 	return NULL;
 }
@@ -899,8 +904,6 @@ doca_error_t decode_Bench
 	struct timeval start_time, end_time;
 	uint64_t matrix_create_time_us = 0;
 	uint64_t doca_decode_time = 0;
-	uint64_t copy_src_time_us = 0;
-	uint64_t copy_dst_time_us = 0;
 	uint64_t set_mmap_time_us = 0;
 	uint64_t task_init_time_us = 0;
 	uint64_t reset_time_us = 0;
@@ -928,24 +931,32 @@ doca_error_t decode_Bench
 	for(int i = 0; i < n_missing; i++){
 		state->missing_indices[i] = m+i;
 	}
-	int remaining_data_block_num = k-m;
+	int remaining_data_block_num = k-erasures_count;
 	int remaining_code_block_num = m;
 	int align_size = 64*1024;
 
 	posix_memalign((void**)&state->src_buffer, align_size, src_size);
 	posix_memalign((void**)&state->dst_buffer, align_size, dst_size);
 
-	// prepare data  and parity block
-	char* src_seg;
-	posix_memalign((void**)&src_seg, align_size, src_size_seg);
-	writeRandomData(src_seg, remaining_data_block_num*block_size);
-	for(int i=0; i<=m; i++){
-		writeRandomData(src_seg + remaining_data_block_num*block_size + i*block_size, block_size);
+	char* src_segs;
+	posix_memalign((void**)&src_segs, align_size, src_size);
+	for(int j=0; j<=batch_size-1; j++){
+		// prepare data
+		writeRandomData(src_segs+j*src_size_seg, 
+			remaining_data_block_num*block_size);
+
+		// prepare parity
+		writeRandomData(src_segs + j*src_size_seg + remaining_data_block_num*block_size, 
+					remaining_code_block_num *block_size);
+		
 	}
 
 	char* dst_segs;
 	posix_memalign((void**)&dst_segs, align_size, dst_size);
 	state->app_dst_buffer = dst_segs; // 供callback使用
+
+	// dst 预热
+	writeRandomData(dst_segs, dst_size);
 
 	union doca_data ctx_user_data;
 	union doca_data *task_user_data_ec_batch;
@@ -1005,10 +1016,7 @@ doca_error_t decode_Bench
 	result = doca_ctx_set_state_changed_cb(state->core_state.ctx, ec_state_changed_callback);
 
 	if(ot == Batch_Copy_Pipeline)
-		result = doca_ec_task_recover_set_conf(state->ec,
-							ec_recover_completed_callback_memcpy,
-							ec_recover_error_callback,
-							batch_size);
+		result = doca_ec_task_recover_set_conf(state->ec, ec_recover_completed_callback_memcpy, ec_recover_error_callback, batch_size);
 	else
 		result = doca_ec_task_recover_set_conf(state->ec,
 				ec_recover_completed_callback,
@@ -1066,7 +1074,7 @@ doca_error_t decode_Bench
 		batch_cb_data->app_dst_buffer = state->app_dst_buffer;
 		task_user_data_ec_batch[i].ptr = batch_cb_data;
 
-        result = doca_ec_task_recover_allocate_init(state->core_state.ctx,
+        result = doca_ec_task_recover_allocate_init(state->ec,
                             state->decoding_matrix,
                             ec_src_doca_buf_batch[i][0],
                             ec_dst_doca_buf_batch[i],
@@ -1090,9 +1098,19 @@ doca_error_t decode_Bench
 		printf("Batch size %d\n", batch_size);
 		printf("Dst seg size %d MB\n", dst_size_seg / (1024*1024));
 
-		for(int j=0; j<=batch_size-1; j++){
-			memcpy(state->src_buffer + j * src_size_seg, src_seg, src_size_seg);
+		uint64_t copy_src_time_us = 0;
+		uint64_t copy_dst_time_us = 0;
+		uint64_t polling_time_us = 0;
+		struct timeval copy_start, copy_end, polling_start, polling_end;
 
+		for(int j=0; j<=batch_size-1; j++){
+			gettimeofday(&copy_start, 0);
+			memcpy(state->src_buffer + j * src_size_seg, src_segs, src_size_seg);
+			gettimeofday(&copy_end, 0);
+			copy_src_time_us += (copy_end.tv_sec - copy_start.tv_sec) * 1000000 + copy_end.tv_usec - copy_start.tv_usec;
+			
+
+			gettimeofday(&polling_start, 0);
 			doca_error_t result = doca_task_submit(ec_task_batch[j]);
 			if (result != DOCA_SUCCESS) {
 				printf("submit error at task %d: %s\n", PTHREAD_CREATE_JOINABLE, doca_error_get_descr(result));
@@ -1105,9 +1123,14 @@ doca_error_t decode_Bench
 				if (doca_pe_progress(state->core_state.pe) == 0)
 					nanosleep(&ts, &ts);
 			}
+			gettimeofday(&polling_end, 0);
+			polling_time_us += (polling_end.tv_sec - polling_start.tv_sec) * 1000000 + polling_end.tv_usec - polling_start.tv_usec;
 
 			// 3) memcpy dst
+			gettimeofday(&copy_start, 0);
 			memcpy(dst_segs + j*dst_size_seg, state->dst_buffer + j*dst_size_seg, dst_size_seg);
+			gettimeofday(&copy_end, 0);
+			copy_dst_time_us += (copy_end.tv_sec - copy_start.tv_sec) * 1000000 + copy_end.tv_usec - copy_start.tv_usec;
 		}
 
 		gettimeofday(&end_time, 0);
@@ -1116,18 +1139,30 @@ doca_error_t decode_Bench
 		float doca_Naive_Decode_perf = (float)(erasures_count*block_size*batch_size) / doca_decode_time;
 		printf("DOCA Naive Decode Time %ld us\n", doca_decode_time);
 		printf("DOCA Naive Decode Throughput %.2f MB/s\n", doca_Naive_Decode_perf);
+		printf("memcpy time %lld us\n", copy_src_time_us + copy_dst_time_us);
+		printf("polling time %ld us\n", polling_time_us);
 
 	}else if(ot == Batch_Copy){
 		gettimeofday(&start_time, 0);
 
 		printf("Start Batch Copy Decode\n");
 		printf("Batch size %d\n", batch_size);
+		printf("Src seg size %d MB\n", src_size_seg / (1024*1024));
 		printf("Dst seg size %d MB\n", dst_size_seg / (1024*1024));
 
-		for(int j=0; j<=batch_size-1; j++){
-			memcpy(state->src_buffer + j * src_size_seg, src_seg, src_size_seg);
-		}
+		uint64_t copy_src_time_us = 0;
+		uint64_t copy_dst_time_us = 0;
+		uint64_t polling_time_us = 0;
+		struct timeval copy_start, copy_end, polling_start, polling_end;
 
+		gettimeofday(&copy_start, 0);
+		for(int j=0; j<=batch_size-1; j++){
+			memcpy(state->src_buffer + j * src_size_seg, src_segs + j * src_size_seg, src_size_seg);
+		}
+		gettimeofday(&copy_end, 0);
+		copy_src_time_us += (copy_end.tv_sec - copy_start.tv_sec) * 1000000 + copy_end.tv_usec - copy_start.tv_usec;
+
+		gettimeofday(&polling_start, 0);
 		for(int j=0; j<=batch_size-1; j++){
 			doca_error_t result = doca_task_submit(ec_task_batch[j]);
 			if (result != DOCA_SUCCESS) {
@@ -1141,18 +1176,66 @@ doca_error_t decode_Bench
 			if (doca_pe_progress(state->core_state.pe) == 0)
 				nanosleep(&ts, &ts);
 		}
+		gettimeofday(&polling_end, 0);
+		polling_time_us += (polling_end.tv_sec - polling_start.tv_sec) * 1000000 + polling_end.tv_usec - polling_start.tv_usec;
 
+		gettimeofday(&copy_start, 0);
 		for(int j=0; j<=batch_size-1; j++){
 			// 3) memcpy dst
 			memcpy(dst_segs + j*dst_size_seg, state->dst_buffer + j*dst_size_seg, dst_size_seg);
 		}
+		gettimeofday(&copy_end, 0);
+		copy_dst_time_us += (copy_end.tv_sec - copy_start.tv_sec) * 1000000 + copy_end.tv_usec - copy_start.tv_usec;
 
 		gettimeofday(&end_time, 0);
 		doca_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + end_time.tv_usec - start_time.tv_usec;
 		float doca_Batch_Copy_decode_perf = (float)(erasures_count*block_size*batch_size) / doca_decode_time;
 		printf("DOCA Batch Copy Decode Time %ld us\n", doca_decode_time);
 		printf("DOCA Batch Copy Decode Throughput %.2f MB/s\n", doca_Batch_Copy_decode_perf);
+		printf("memcpy time %lld us\n", copy_src_time_us + copy_dst_time_us);
+		printf("cp src time %lld us\n", copy_src_time_us);
+		printf("cp dst time %lld us\n", copy_dst_time_us);
+		printf("polling time %ld us\n", polling_time_us);
 
+	}else if(ot == Batch_NoCopy){
+		/*
+			这里直接模拟，不记录copy时间；
+		*/
+
+		printf("Start Batch NoCopy Decode\n");
+		printf("Batch size %d\n", batch_size);
+		printf("Dst seg size %d MB\n", dst_size_seg / (1024*1024));
+
+		for(int j=0; j<=batch_size-1; j++){
+			memcpy(state->src_buffer + j * src_size_seg, src_segs, src_size_seg);
+		}
+
+		gettimeofday(&start_time, 0);
+		for(int j=0; j<=batch_size-1; j++){
+			doca_error_t result = doca_task_submit(ec_task_batch[j]);
+			if (result != DOCA_SUCCESS) {
+				printf("submit error at task %d: %s\n", PTHREAD_CREATE_JOINABLE, doca_error_get_descr(result));
+			}
+			state->run_pe_progress = true;
+			state->num_remaining_tasks ++;
+		}
+
+		while (state->run_pe_progress) {
+			if (doca_pe_progress(state->core_state.pe) == 0)
+				nanosleep(&ts, &ts);
+		}
+		gettimeofday(&end_time, 0);
+
+		for(int j=0; j<=batch_size-1; j++){
+			// 3) memcpy dst
+			memcpy(dst_segs + j*dst_size_seg, state->dst_buffer + j*dst_size_seg, dst_size_seg);
+		}
+
+		doca_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + end_time.tv_usec - start_time.tv_usec;
+		float doca_Batch_NoCopy_decode_perf = (float)(erasures_count*block_size*batch_size) / doca_decode_time;
+		printf("DOCA Batch NoCopy Decode Time %ld us\n", doca_decode_time);
+		printf("DOCA Batch NoCopy Decode Throughput %.2f MB/s\n", doca_Batch_NoCopy_decode_perf);
+	
 	}else if(ot == Batch_Copy_Pipeline){
 		/*
 			流水线执行一个batch
@@ -1164,7 +1247,7 @@ doca_error_t decode_Bench
 		gettimeofday(&start_time, 0);
 
 		state->num_remaining_tasks = 0;
-		state->run_pe_progress = false;
+		state->run_pe_progress = true;
 
 		pthread_t submit_thread;
 		struct decode_batch_submit_data submit_data = {
@@ -1172,7 +1255,7 @@ doca_error_t decode_Bench
 			.ec_task_batch = ec_task_batch,
 			.batch_size = batch_size,
 			.src_buffer = state->src_buffer,
-			.src_seg = src_seg,
+			.src_seg = src_segs,
 			.src_size_seg = src_size_seg,
 			.submit_result = DOCA_SUCCESS,
 		};
@@ -1185,6 +1268,7 @@ doca_error_t decode_Bench
 		/* Wait for recover task completion and for context to return to idle */
 		while (state->run_pe_progress || state->num_remaining_tasks > 0) {
 			if (doca_pe_progress(state->core_state.pe) == 0) {
+				// printf("sleep\n");
 				nanosleep(&ts, &ts);
 			}
 		}
