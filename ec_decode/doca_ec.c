@@ -1117,6 +1117,42 @@ doca_error_t decode_Bench
 		printf("DOCA Naive Decode Time %ld us\n", doca_decode_time);
 		printf("DOCA Naive Decode Throughput %.2f MB/s\n", doca_Naive_Decode_perf);
 
+	}else if(ot == Batch_Copy){
+		gettimeofday(&start_time, 0);
+
+		printf("Start Batch Copy Decode\n");
+		printf("Batch size %d\n", batch_size);
+		printf("Dst seg size %d MB\n", dst_size_seg / (1024*1024));
+
+		for(int j=0; j<=batch_size-1; j++){
+			memcpy(state->src_buffer + j * src_size_seg, src_seg, src_size_seg);
+		}
+
+		for(int j=0; j<=batch_size-1; j++){
+			doca_error_t result = doca_task_submit(ec_task_batch[j]);
+			if (result != DOCA_SUCCESS) {
+				printf("submit error at task %d: %s\n", PTHREAD_CREATE_JOINABLE, doca_error_get_descr(result));
+			}
+			state->run_pe_progress = true;
+			state->num_remaining_tasks ++;
+		}
+
+		while (state->run_pe_progress) {
+			if (doca_pe_progress(state->core_state.pe) == 0)
+				nanosleep(&ts, &ts);
+		}
+
+		for(int j=0; j<=batch_size-1; j++){
+			// 3) memcpy dst
+			memcpy(dst_segs + j*dst_size_seg, state->dst_buffer + j*dst_size_seg, dst_size_seg);
+		}
+
+		gettimeofday(&end_time, 0);
+		doca_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + end_time.tv_usec - start_time.tv_usec;
+		float doca_Batch_Copy_decode_perf = (float)(erasures_count*block_size*batch_size) / doca_decode_time;
+		printf("DOCA Batch Copy Decode Time %ld us\n", doca_decode_time);
+		printf("DOCA Batch Copy Decode Throughput %.2f MB/s\n", doca_Batch_Copy_decode_perf);
+
 	}else if(ot == Batch_Copy_Pipeline){
 		/*
 			流水线执行一个batch
