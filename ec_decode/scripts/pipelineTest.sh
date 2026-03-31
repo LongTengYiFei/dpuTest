@@ -3,35 +3,35 @@
 batch_sizes=(1 2 4 8 16 32 64)
 run_time=10
 # offload_type=("Naive" "Batch_Copy" "Batch_NoCopy" "Batch_Copy_Pipeline")
-offload_type=("Batch_Copy")
+offload_type=("Naive")
 
 # 定义 EC 配置二维数组
 # 格式: "描述 k m" 其中 k=数据块数, m=校验块数
 # 这里使用关联数组模拟二维数组
 declare -A ec_configs
-# ec_configs[0,0]="4+2"
-# ec_configs[0,1]="4"
-# ec_configs[0,2]="2"
-# ec_configs[0,3]="2"
+ec_configs[0,0]="4+2"
+ec_configs[0,1]="4"
+ec_configs[0,2]="2"
+ec_configs[0,3]="2"
 
-# ec_configs[1,0]="6+2"
-# ec_configs[1,1]="6"
-# ec_configs[1,2]="2"
-# ec_configs[1,3]="2"
+ec_configs[1,0]="6+2"
+ec_configs[1,1]="6"
+ec_configs[1,2]="2"
+ec_configs[1,3]="2"
 
 # 可以继续添加更多配置
-ec_configs[0,0]="8+4"
-ec_configs[0,1]="8"
-ec_configs[0,2]="4"
-ec_configs[0,3]="4"
+ec_configs[2,0]="8+4"
+ec_configs[2,1]="8"
+ec_configs[2,2]="4"
+ec_configs[2,3]="4"
 
-ec_configs[1,0]="12+4"
-ec_configs[1,1]="12"
-ec_configs[1,2]="4"
-ec_configs[1,3]="4"
+ec_configs[3,0]="12+4"
+ec_configs[3,1]="12"
+ec_configs[3,2]="4"
+ec_configs[3,3]="4"
 
 # 获取 EC 配置数量
-ec_config_count=2  # 如果有更多配置，修改这个数字
+ec_config_count=4  # 如果有更多配置，修改这个数字
 
 echo "=========================================="
 echo "开始批量测试"
