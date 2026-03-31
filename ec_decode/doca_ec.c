@@ -1016,7 +1016,10 @@ doca_error_t decode_Bench
 	result = doca_ctx_set_state_changed_cb(state->core_state.ctx, ec_state_changed_callback);
 
 	if(ot == Batch_Copy_Pipeline)
-		result = doca_ec_task_recover_set_conf(state->ec, ec_recover_completed_callback_memcpy, ec_recover_error_callback, batch_size);
+		result = doca_ec_task_recover_set_conf(state->ec, 
+			ec_recover_completed_callback_memcpy, 
+			ec_recover_error_callback, 
+			batch_size);
 	else
 		result = doca_ec_task_recover_set_conf(state->ec,
 				ec_recover_completed_callback,
@@ -1105,11 +1108,10 @@ doca_error_t decode_Bench
 
 		for(int j=0; j<=batch_size-1; j++){
 			gettimeofday(&copy_start, 0);
-			memcpy(state->src_buffer + j * src_size_seg, src_segs, src_size_seg);
+			memcpy(state->src_buffer + j * src_size_seg, src_segs + j * src_size_seg, src_size_seg);
 			gettimeofday(&copy_end, 0);
 			copy_src_time_us += (copy_end.tv_sec - copy_start.tv_sec) * 1000000 + copy_end.tv_usec - copy_start.tv_usec;
 			
-
 			gettimeofday(&polling_start, 0);
 			doca_error_t result = doca_task_submit(ec_task_batch[j]);
 			if (result != DOCA_SUCCESS) {
