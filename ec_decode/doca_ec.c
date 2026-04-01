@@ -852,6 +852,7 @@ struct decode_batch_submit_data {
 	struct ec_sample_objects *state;
 	struct doca_task **ec_task_batch;
 	int batch_size;
+	int task_start_idx;
 	char *src_buffer;
 	char *src_seg;
 	int src_size_seg;
@@ -863,9 +864,9 @@ static void *ec_decode_submit_thread(void *arg)
 	struct decode_batch_submit_data *data = (struct decode_batch_submit_data *)arg;
 	for (int i = 0; i < data->batch_size; i++) {
 		memcpy(data->src_buffer + i * data->src_size_seg, data->src_seg + i * data->src_size_seg, data->src_size_seg);
-		//memcpy(data->src_buffer + i * data->src_size_seg, data->src_seg , data->src_size_seg);
 
-		doca_error_t result = doca_task_submit(data->ec_task_batch[i]);
+		int task_idx = data->task_start_idx + i;
+		doca_error_t result = doca_task_submit(data->ec_task_batch[task_idx]);
 		if (result != DOCA_SUCCESS) {
 			printf("submit error at task %d: %s\n", i, doca_error_get_descr(result));
 			data->submit_result = result;
@@ -1251,20 +1252,22 @@ doca_error_t decode_Bench
 		state->num_remaining_tasks = 0;
 		state->run_pe_progress = true;
 
-		pthread_t submit_thread;
-		struct decode_batch_submit_data submit_data = {
-			.state = state,
-			.ec_task_batch = ec_task_batch,
-			.batch_size = batch_size,
-			.src_buffer = state->src_buffer,
-			.src_seg = src_segs,
-			.src_size_seg = src_size_seg,
-			.submit_result = DOCA_SUCCESS,
-		};
-
-		if (pthread_create(&submit_thread, NULL, ec_decode_submit_thread, &submit_data) != 0) {
-			printf("failed to create submit thread\n");
-			exit(-1);
+		int submit_thread_num = 2;
+		pthread_t submit_threads[submit_thread_num];
+		struct decode_batch_submit_data submit_datas[submit_thread_num];
+		for(int t=0; t<submit_thread_num; t++){
+			submit_datas[t].state = state;
+			submit_datas[t].ec_task_batch = ec_task_batch;
+			submit_datas[t].batch_size = batch_size/submit_thread_num;
+			submit_datas[t].task_start_idx = t*(batch_size/submit_thread_num);
+			submit_datas[t].src_buffer = state->src_buffer + t*(batch_size/submit_thread_num)*src_size_seg;
+			submit_datas[t].src_seg = src_segs + t*(batch_size/submit_thread_num)*src_size_seg;
+			submit_datas[t].src_size_seg = src_size_seg;
+			submit_datas[t].submit_result = DOCA_SUCCESS;
+			if (pthread_create(&submit_threads[t], NULL, ec_decode_submit_thread, &submit_datas[t]) != 0) {
+				printf("failed to create submit thread %d\n", t);
+				exit(-1);
+			}
 		}
 
 		/* Wait for recover task completion and for context to return to idle */
@@ -1275,13 +1278,19 @@ doca_error_t decode_Bench
 			}
 		}
 
-		pthread_join(submit_thread, NULL); // 等待提交线程结束
+		for(int t=0; t<submit_thread_num; t++){
+			pthread_join(submit_threads[t], NULL);
+		}
+		
 		free(task_user_data_ec_batch);
 
-		if (submit_data.submit_result != DOCA_SUCCESS) {
-			printf("submit error: %s\n", doca_error_get_descr(submit_data.submit_result));
-			return submit_data.submit_result;
+		// submit data result check
+		for(int t=0; t<submit_thread_num; t++){
+			if (submit_datas[t].submit_result != DOCA_SUCCESS) {
+				printf("submit error at thread %d: %s\n", t, doca_error_get_descr(submit_datas[t].submit_result));
+			}
 		}
+		
 		gettimeofday(&end_time, 0);
 		doca_decode_time = (end_time.tv_sec - start_time.tv_sec) * 1000000 + end_time.tv_usec - start_time.tv_usec;
 		float doca_raw_decode_perf = (float)(erasures_count*block_size*batch_size) / doca_decode_time;
