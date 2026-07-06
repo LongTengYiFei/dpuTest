@@ -8,7 +8,7 @@ print_probe() {
     uname -a
     echo
 
-    echo "== doca mount =="
+    echo "== doca installation =="
     if [ -d "${DOCA_HOME:-/opt/mellanox/doca}" ]; then
         echo "found ${DOCA_HOME:-/opt/mellanox/doca}"
         find "${DOCA_HOME:-/opt/mellanox/doca}/lib" -maxdepth 2 -name 'libdoca_compress.so*' -print 2>/dev/null || true
@@ -29,8 +29,8 @@ print_probe() {
 
 build_binary() {
     if [ ! -d "${DOCA_HOME:-/opt/mellanox/doca}" ]; then
-        echo "ERROR: ${DOCA_HOME:-/opt/mellanox/doca} is not mounted in the container." >&2
-        echo "Mount the host DOCA installation, for example: -v /opt/mellanox:/opt/mellanox:ro" >&2
+        echo "ERROR: ${DOCA_HOME:-/opt/mellanox/doca} was not found in the container." >&2
+        echo "Build the image on a host with /opt/mellanox/doca available, or mount it at runtime." >&2
         exit 2
     fi
 

@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV DOCA_HOME=/opt/mellanox/doca
-ENV LD_LIBRARY_PATH=/opt/mellanox/doca/lib/x86_64-linux-gnu:/opt/mellanox/dpdk/lib/x86_64-linux-gnu
+ENV LD_LIBRARY_PATH=/opt/mellanox/doca/lib/x86_64-linux-gnu
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -16,6 +16,11 @@ RUN apt-get update && \
         rdma-core \
         zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
+
+COPY compress/doca-bundle/doca.tar.gz /tmp/doca.tar.gz
+RUN mkdir -p /opt/mellanox && \
+    tar -xzf /tmp/doca.tar.gz -C /opt/mellanox && \
+    rm -f /tmp/doca.tar.gz
 
 WORKDIR /workspace/compress
 COPY compress/ /workspace/compress/
