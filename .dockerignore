@@ -1,0 +1,9 @@
+.git
+.agents
+.codex
+**/doca_compress_test
+**/*.o
+**/*.so
+**/*.a
+**/cpu_ec_test
+**/result.txt
