@@ -1,0 +1,14 @@
+[Unit]
+Description=Configure IPoIB for SNAP NVMe-oF backend
+After=network.target
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ip link set dev ib1 up
+ExecStart=/usr/sbin/ip address replace 192.168.200.4/24 dev ib1
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

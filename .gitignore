@@ -10,3 +10,6 @@ ec_encode/proxy_test
 ec_decode/doca_ec_test
 compress/doca_compress_test
 compress/doca-bundle/
+SNAP/spdk/
+SNAP/run/
+SNAP/results/
