@@ -94,7 +94,7 @@ SNAP 已验证的软件配置：
 
 ## 4. 交接时点的运行状态
 
-以下状态由 2026-09-08 10:45 UTC 的只读检查得到。它们不是持久保证，
+以下状态由 2026-09-08 UTC 的最新只读检查得到。它们不是持久保证，
 每次测试前仍须重新检查。
 
 | 项目 | 当前状态 |
@@ -104,11 +104,12 @@ SNAP 已验证的软件配置：
 | node4 Host `opensmd` | `inactive`；不代表整个 fabric 一定没有其他 SM |
 | node4 DPU `ib1` | `UP`，地址 `192.168.200.4/24` |
 | node3 `ibs21f1` | `UP`，地址 `192.168.200.3/24` |
-| node3 SPDK target | PID 文件指向的进程已停止 |
-| node3 测试盘 BDF | 仍绑定 `uio_pci_generic` |
+| node3 SPDK target | 已停止，PID 文件已移除 |
+| node3 测试盘 BDF | 已恢复到内核 `nvme` 驱动 |
+| node3 测试盘设备名 | 当前为 `/dev/nvme1n2`，未挂载、无 holder，完整序列号匹配 |
 | SNAP 容器 | 此次未以 root 权限复查；最后一次成功测试时运行正常 |
 
-因此，此刻不能直接重跑任何 baseline。至少需要先恢复 node3 target，
+因此，此刻不能直接重跑任何 baseline。至少需要先重新准备并启动 node3 target，
 并根据所测路径恢复 node4 Host 或 DPU 的网络与 SNAP 状态。
 
 ## 5. 安全红线
@@ -436,6 +437,21 @@ Baseline 2 中这是预期现象：`0000:b1:00.2` 绑定 `uio_pci_generic` 后�
 SPDK 直接消费，不会注册 Linux block device。只有 Baseline 4 将它绑定
 `nvme` 内核驱动后，才应在 `lsblk` 中出现。
 
+### 11.8 node3 恢复后名称变成 `/dev/nvme1n2`
+
+node3 启用了内核原生 NVMe multipath（`nvme_core.multipath=Y`）。重新绑定
+驱动后，控制器实例被分配为 `nvme5`，multipath namespace-head 块设备被
+分配为 `/dev/nvme1n2`。其中名称末尾的 `n2` 是内核实例编号，不代表物理
+盘的 NVMe NSID 已变为 2；`/sys/class/block/nvme1n2/nsid` 实测仍为 `1`。
+设备状态为 `live`，BDF、容量、型号和完整序列号均匹配。脚本和后续实验
+不应假定名称固定，应继续通过 sysfs、BDF、NQN/NSID 和序列号解析设备。
+当前可使用的稳定链接是：
+
+```text
+/dev/disk/by-id/nvme-INTEL_SSDPF2KX019XZ_PHAO332302201P9SGN
+/dev/disk/by-path/pci-0000:65:00.0-nvme-1
+```
+
 ## 12. 文件索引
 
 | 文件 | 用途 |
@@ -447,6 +463,7 @@ SPDK 直接消费，不会注册 Linux block device。只有 Baseline 4 将它�
 | `node3_prepare.sh` | 安全检查并只绑定 node3 测试盘 |
 | `node3_start_target.sh` | 启动 node3 SPDK NVMe-oF/RDMA target |
 | `node3_stop_target.sh` | 停止 node3 target |
+| `node3_restore_nvme1_to_kernel.sh` | 停止 target，并将指定 P5530 安全恢复给 Linux `nvme` 驱动 |
 | `client_prepare.sh` | 准备 node4 Host 的 Baseline 1 环境 |
 | `run_baseline1.sh` | 单项运行 Baseline 1 |
 | `run_baseline2_suite.sh` | 运行 Baseline 2 五项矩阵 |
@@ -457,6 +474,9 @@ SPDK 直接消费，不会注册 Linux block device。只有 Baseline 4 将它�
 | `dpu_collect_baseline2_diagnostics.sh` | 收集 DPU/SNAP 诊断信息 |
 | `plot_baseline_comparison.py` | 从日志生成 Baseline 1/2 PNG 和 SVG |
 | `results/` | 原始日志、summary 与对比图 |
+
+node3 测试盘转作 Ceph BlueStore 的单独交接说明见
+[`../NODE3_NVME_CEPH_HANDOFF.md`](../NODE3_NVME_CEPH_HANDOFF.md)。
 
 ## 13. 下一位接手者的推荐顺序
 

@@ -78,4 +78,5 @@ sudo ./node3_stop_target.sh
 ```
 
 To return the NVMe device to the Linux kernel later, use SPDK's targeted reset
-procedure and verify the PCI address before proceeding.
+procedure and verify the PCI address before proceeding. The guarded helper for
+the node3 test device is `node3_restore_nvme1_to_kernel.sh`.
