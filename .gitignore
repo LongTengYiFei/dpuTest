@@ -3,6 +3,8 @@
 ./build/*
 testfile/linux-6.7-rc2.tar
 a.out
+__pycache__/
+*.py[cod]
 doca_test
 arm_deflate_test
 arm_sha_test
