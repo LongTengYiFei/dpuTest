@@ -1,0 +1,10 @@
+RAW_CONFIG pool=ceph-raw-baseline dataset=/home/cyf/raid0/LogHub/Android_v1 raw_prefix=android-v1-4m-raw rounds=5
+WRITE_RAW objects=46 raw_bytes=192270829 elapsed_ms=12868.928 raw_mib_s=14.25
+RAW_DATASET objects=46 raw_bytes=192270829 object_bytes=4194304 rounds=5 prefix=android-v1-4m-raw
+WARMUP method=raw
+RESULT method=raw round=1 objects=46 raw_bytes=192270829 total_ms=2157.942 read_ms=2157.942 decompress_ms=0.000 throughput_mib_s=84.97 verification=size-ok
+RESULT method=raw round=2 objects=46 raw_bytes=192270829 total_ms=2190.856 read_ms=2190.856 decompress_ms=0.000 throughput_mib_s=83.70 verification=size-ok
+RESULT method=raw round=3 objects=46 raw_bytes=192270829 total_ms=2216.464 read_ms=2216.464 decompress_ms=0.000 throughput_mib_s=82.73 verification=size-ok
+RESULT method=raw round=4 objects=46 raw_bytes=192270829 total_ms=2191.581 read_ms=2191.581 decompress_ms=0.000 throughput_mib_s=83.67 verification=size-ok
+RESULT method=raw round=5 objects=46 raw_bytes=192270829 total_ms=2207.459 read_ms=2207.459 decompress_ms=0.000 throughput_mib_s=83.07 verification=size-ok
+RAW_SUMMARY raw_mib_s=83.62 total_ms=10964.301 read_ms=10964.301 rounds=5 verification=size-ok

@@ -1,0 +1,16 @@
+CONFIG pool=doca-zlib-baseline dataset=/home/cyf/raid0/LogHub/Android_v1 prefix=android-v1-4m rounds=5 pci=b1:00.0
+WRITE objects=46 raw_bytes=192270829 compressed_bytes=25849880 ratio=0.1344 elapsed_ms=10540.294 raw_mib_s=17.40
+DATASET objects=46 raw_bytes=192270829 compressed_bytes=25849880 object_bytes=4194304 rounds=5 pci=b1:00.0
+WARMUP method=cpu
+WARMUP method=doca
+RESULT method=cpu round=1 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=434.646 read_ms=35.476 decompress_ms=399.171 throughput_mib_s=421.87 verification=ok
+RESULT method=doca round=1 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=82.523 read_ms=32.230 decompress_ms=50.293 throughput_mib_s=2221.96 verification=ok
+RESULT method=doca round=2 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=81.442 read_ms=31.022 decompress_ms=50.420 throughput_mib_s=2251.48 verification=ok
+RESULT method=cpu round=2 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=452.481 read_ms=31.327 decompress_ms=421.154 throughput_mib_s=405.24 verification=ok
+RESULT method=cpu round=3 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=423.170 read_ms=33.375 decompress_ms=389.795 throughput_mib_s=433.31 verification=ok
+RESULT method=doca round=3 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=81.048 read_ms=30.711 decompress_ms=50.337 throughput_mib_s=2262.41 verification=ok
+RESULT method=doca round=4 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=82.629 read_ms=32.449 decompress_ms=50.180 throughput_mib_s=2219.13 verification=ok
+RESULT method=cpu round=4 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=430.131 read_ms=33.142 decompress_ms=396.990 throughput_mib_s=426.30 verification=ok
+RESULT method=cpu round=5 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=422.742 read_ms=33.052 decompress_ms=389.689 throughput_mib_s=433.75 verification=ok
+RESULT method=doca round=5 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=82.671 read_ms=32.248 decompress_ms=50.423 throughput_mib_s=2217.99 verification=ok
+SUMMARY cpu_mib_s=423.83 doca_mib_s=2234.44 doca_over_cpu=5.2720x doca_slower_pct=-427.20 cpu_total_ms=2163.170 doca_total_ms=410.313 cpu_read_ms=166.372 doca_read_ms=158.660 cpu_decompress_ms=1996.798 doca_decompress_ms=251.653 verification=ok

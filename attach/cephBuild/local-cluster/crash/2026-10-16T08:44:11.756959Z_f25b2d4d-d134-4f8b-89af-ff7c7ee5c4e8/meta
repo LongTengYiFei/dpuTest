@@ -1,0 +1,23 @@
+{
+    "crash_id": "2026-10-16T08:44:11.756959Z_f25b2d4d-d134-4f8b-89af-ff7c7ee5c4e8",
+    "timestamp": "2026-10-16T08:44:11.756959Z",
+    "process_name": "ceph-mgr",
+    "entity_name": "mgr.m1",
+    "ceph_version": "17.2.7",
+    "utsname_hostname": "server-8003",
+    "utsname_sysname": "Linux",
+    "utsname_release": "5.15.0-140-generic",
+    "utsname_version": "#150-Ubuntu SMP Sat Apr 12 06:00:09 UTC 2025",
+    "utsname_machine": "x86_64",
+    "os_name": "Ubuntu 22.04.1 LTS",
+    "os_id": "22.04",
+    "os_version_id": "22.04",
+    "os_version": "22.04.1 LTS (Jammy Jellyfish)",
+    "backtrace": [
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/dashboard/__init__.py\", line 9, in <module>\n    import cherrypy",
+        "ModuleNotFoundError: No module named 'cherrypy'"
+    ],
+    "mgr_module": "dashboard",
+    "mgr_module_caller": "PyModule::load_subclass_of",
+    "mgr_python_exception": "ModuleNotFoundError"
+}

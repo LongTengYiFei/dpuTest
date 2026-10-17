@@ -1,0 +1,28 @@
+[global]
+fsid = 886cee71-e800-4d78-95f4-43b791bfeb50
+mon initial members = node1
+mon host = [v2:10.26.57.2:3300,v1:10.26.57.2:6789]
+public network = 10.26.57.0/24
+cluster network = 10.26.57.0/24
+auth cluster required = cephx
+auth service required = cephx
+auth client required = cephx
+ms type = async+posix
+ms cluster type = async+posix
+osd pool default size = 1
+osd pool default min size = 1
+osd crush chooseleaf type = 0
+mon allow pool delete = true
+run dir = /home/cyf/dpuTest/attach/cephBuild/local-cluster/run
+log file = /home/cyf/dpuTest/attach/cephBuild/local-cluster/log/ceph-$name.log
+crash dir = /home/cyf/dpuTest/attach/cephBuild/local-cluster/crash
+setuser match path = /var/lib/ceph
+setgroup match path = /var/lib/ceph
+erasure code dir = /home/cyf/githubDownload/ceph/build/lib
+plugin dir = /home/cyf/githubDownload/ceph/build/lib
+
+[client.admin]
+keyring = /etc/ceph/ceph.client.admin.keyring
+
+[client.bootstrap-osd]
+keyring = /var/lib/ceph/bootstrap-osd/ceph.keyring

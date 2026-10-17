@@ -1,0 +1,15 @@
+[global]
+        fsid = 7a9f577f-30d3-426d-86fd-1eaab8d3d891
+        mon initial members = node4
+        mon host = 10.26.57.57
+        public network = 10.26.57.0/24
+        auth cluster required = cephx
+        auth service required = cephx
+        auth client required = cephx
+        osd journal size = 1024
+        osd pool default size = 2
+        osd pool default min size = 2
+        osd pool default pg num = 32
+        osd pool default pgp num = 32
+        osd crush chooseleaf type = 1
+

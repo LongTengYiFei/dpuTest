@@ -1,0 +1,17 @@
+CONFIG pool=doca-zlib-baseline dataset=/home/cyf/raid0/LogHub/Android_v1 compressed_prefix=android-v1-4m raw_prefix=android-v1-4m-raw rounds=5 pci=b1:00.0
+WRITE objects=46 raw_bytes=192270829 compressed_bytes=25849880 ratio=0.1344 elapsed_ms=9916.650 raw_mib_s=18.49
+WRITE_RAW objects=46 raw_bytes=192270829 elapsed_ms=13356.328 raw_mib_s=13.73
+DATASET objects=46 raw_bytes=192270829 compressed_bytes=25849880 object_bytes=4194304 rounds=5 pci=b1:00.0 raw_prefix=android-v1-4m-raw compressed_prefix=android-v1-4m
+WARMUP method=raw
+WARMUP method=doca
+RESULT method=raw round=1 objects=46 raw_bytes=192270829 total_ms=1308.004 read_ms=1308.004 decompress_ms=0.000 throughput_mib_s=140.19 verification=size-ok
+RESULT method=doca round=1 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=133.756 read_ms=80.269 decompress_ms=53.487 throughput_mib_s=1370.88 verification=ok
+RESULT method=doca round=2 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=83.387 read_ms=31.728 decompress_ms=51.659 throughput_mib_s=2198.96 verification=ok
+RESULT method=raw round=2 objects=46 raw_bytes=192270829 total_ms=706.920 read_ms=706.920 decompress_ms=0.000 throughput_mib_s=259.38 verification=size-ok
+RESULT method=raw round=3 objects=46 raw_bytes=192270829 total_ms=602.464 read_ms=602.464 decompress_ms=0.000 throughput_mib_s=304.36 verification=size-ok
+RESULT method=doca round=3 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=104.575 read_ms=51.190 decompress_ms=53.384 throughput_mib_s=1753.42 verification=ok
+RESULT method=doca round=4 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=81.502 read_ms=31.654 decompress_ms=49.848 throughput_mib_s=2249.81 verification=ok
+RESULT method=raw round=4 objects=46 raw_bytes=192270829 total_ms=642.059 read_ms=642.059 decompress_ms=0.000 throughput_mib_s=285.59 verification=size-ok
+RESULT method=raw round=5 objects=46 raw_bytes=192270829 total_ms=754.441 read_ms=754.441 decompress_ms=0.000 throughput_mib_s=243.05 verification=size-ok
+RESULT method=doca round=5 objects=46 raw_bytes=192270829 compressed_bytes=25849880 total_ms=117.290 read_ms=66.478 decompress_ms=50.812 throughput_mib_s=1563.33 verification=ok
+SUMMARY raw_mib_s=228.41 doca_mib_s=1761.38 doca_over_raw=7.7114x doca_slower_pct=-671.14 raw_total_ms=4013.888 doca_total_ms=520.510 raw_read_ms=4013.888 doca_read_ms=261.319 doca_decompress_ms=259.191 verification=ok

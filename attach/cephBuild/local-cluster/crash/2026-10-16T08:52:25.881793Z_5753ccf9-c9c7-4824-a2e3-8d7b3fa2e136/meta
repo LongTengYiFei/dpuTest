@@ -1,0 +1,27 @@
+{
+    "crash_id": "2026-10-16T08:52:25.881793Z_5753ccf9-c9c7-4824-a2e3-8d7b3fa2e136",
+    "timestamp": "2026-10-16T08:52:25.881793Z",
+    "process_name": "ceph-mgr",
+    "entity_name": "mgr.m1",
+    "ceph_version": "17.2.7",
+    "utsname_hostname": "server-8003",
+    "utsname_sysname": "Linux",
+    "utsname_release": "5.15.0-140-generic",
+    "utsname_version": "#150-Ubuntu SMP Sat Apr 12 06:00:09 UTC 2025",
+    "utsname_machine": "x86_64",
+    "os_name": "Ubuntu 22.04.1 LTS",
+    "os_id": "22.04",
+    "os_version_id": "22.04",
+    "os_version": "22.04.1 LTS (Jammy Jellyfish)",
+    "backtrace": [
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/devicehealth/module.py\", line 338, in serve\n    if self.db_ready() and self.enable_monitoring:",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/mgr_module.py\", line 1219, in db_ready\n    return self.db is not None",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/mgr_module.py\", line 1231, in db\n    self._db = self.open_db()",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/mgr_module.py\", line 1212, in open_db\n    self.configure_db(db)",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/mgr_module.py\", line 1197, in configure_db\n    db.execute('PRAGMA JOURNAL_MODE = PERSIST')",
+        "sqlite3.OperationalError: disk I/O error"
+    ],
+    "mgr_module": "devicehealth",
+    "mgr_module_caller": "PyModuleRunner::serve",
+    "mgr_python_exception": "OperationalError"
+}

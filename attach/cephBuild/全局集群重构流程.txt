@@ -1,0 +1,7 @@
+refresh_ceph_mon_conf.sh 刷新mon启动脚本。(54服务器执行一次)
+rebuildENV.sh            检查该脚本里的ip相关配置是否正确。 (54服务器执行一次)
+危险操作-手动卸载：umount卸载所有/var/lib/ceph/osd/ceph-* (所有服务器执行)
+危险操作-手动擦除：wipefs -a -f 对应的SSD；(所有服务器执行)
+synConf.sh         同步osd密钥，否则其余机器无法创建OSD。(54服务器执行一次)
+createOSD.sh       执行此命令之前先检查系统是否存在Ceph用户。(54服务器执行一次)
+startOSD.sh        手动在每台机器上运行，启动对应的OSD；(所有服务器执行)

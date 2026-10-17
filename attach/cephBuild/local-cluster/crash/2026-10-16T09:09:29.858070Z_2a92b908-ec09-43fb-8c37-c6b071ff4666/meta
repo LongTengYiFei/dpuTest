@@ -1,0 +1,25 @@
+{
+    "crash_id": "2026-10-16T09:09:29.858070Z_2a92b908-ec09-43fb-8c37-c6b071ff4666",
+    "timestamp": "2026-10-16T09:09:29.858070Z",
+    "process_name": "ceph-mgr",
+    "entity_name": "mgr.m1",
+    "ceph_version": "17.2.7",
+    "utsname_hostname": "server-8003",
+    "utsname_sysname": "Linux",
+    "utsname_release": "5.15.0-140-generic",
+    "utsname_version": "#150-Ubuntu SMP Sat Apr 12 06:00:09 UTC 2025",
+    "utsname_machine": "x86_64",
+    "os_name": "Ubuntu 22.04.1 LTS",
+    "os_id": "22.04",
+    "os_version_id": "22.04",
+    "os_version": "22.04.1 LTS (Jammy Jellyfish)",
+    "backtrace": [
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/rook/__init__.py\", line 5, in <module>\n    from .module import RookOrchestrator",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/rook/module.py\", line 41, in <module>\n    from .rook_cluster import RookCluster",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/rook/rook_cluster.py\", line 17, in <module>\n    import jsonpatch",
+        "ModuleNotFoundError: No module named 'jsonpatch'"
+    ],
+    "mgr_module": "rook",
+    "mgr_module_caller": "PyModule::load_subclass_of",
+    "mgr_python_exception": "ModuleNotFoundError"
+}

@@ -1,0 +1,25 @@
+{
+    "crash_id": "2026-10-16T08:45:01.064878Z_16705419-83bf-4764-9e3c-4b8f4b6f5539",
+    "timestamp": "2026-10-16T08:45:01.064878Z",
+    "process_name": "ceph-mgr",
+    "entity_name": "mgr.m1",
+    "ceph_version": "17.2.7",
+    "utsname_hostname": "server-8003",
+    "utsname_sysname": "Linux",
+    "utsname_release": "5.15.0-140-generic",
+    "utsname_version": "#150-Ubuntu SMP Sat Apr 12 06:00:09 UTC 2025",
+    "utsname_machine": "x86_64",
+    "os_name": "Ubuntu 22.04.1 LTS",
+    "os_id": "22.04",
+    "os_version_id": "22.04",
+    "os_version": "22.04.1 LTS (Jammy Jellyfish)",
+    "backtrace": [
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/cephadm/__init__.py\", line 1, in <module>\n    from .module import CephadmOrchestrator",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/cephadm/module.py\", line 36, in <module>\n    from cephadm.agent import CherryPyThread, CephadmAgentHelpers",
+        "  File \"/home/cyf/githubDownload/ceph/src/pybind/mgr/cephadm/agent.py\", line 1, in <module>\n    import cherrypy",
+        "ModuleNotFoundError: No module named 'cherrypy'"
+    ],
+    "mgr_module": "cephadm",
+    "mgr_module_caller": "PyModule::load_subclass_of",
+    "mgr_python_exception": "ModuleNotFoundError"
+}

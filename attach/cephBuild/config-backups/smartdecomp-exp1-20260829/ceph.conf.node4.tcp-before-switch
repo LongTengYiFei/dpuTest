@@ -1,0 +1,26 @@
+#cyf正在用，请勿修改；
+[global]
+erasure code dir = /home/cyf/ceph-dpu/build/lib
+plugin dir = /home/cyf/ceph-dpu/build/lib
+fsid = 886cee71-e800-4d78-95f4-43b791bfeb50
+mon initial members = node1
+mon host = 10.26.57.54
+public network = 10.26.57.0/24
+auth cluster required = cephx
+auth service required = cephx
+auth client required = cephx
+osd journal size = 1024
+osd pool default size = 3
+osd crush chooseleaf type = 0
+setuser match path = /var/lib/ceph
+setgroup match path = /var/lib/ceph
+ms_type = async+posix
+ms_cluster_type = async+posix
+
+[mon]
+mon_allow_pool_delete = true
+mon data avail warn = 2
+mon data avail crit = 1
+
+[client.bootstrap-osd]
+keyring = /var/lib/ceph/bootstrap-osd/ceph.keyring
