@@ -9,7 +9,7 @@ library_path=/usr/local/lib/ceph/dpu:/home/cyf/ceph-dpu/build/lib:/opt/mellanox/
 
 entries=(
   "1:node2:/dev/nvme1n1"
-  "2:node3:/dev/nvme1n2"
+  "2:node3:/dev/nvme1n1"
   "3:node1:/dev/nvme1n1"
   "4:node2:/dev/nvme2n1"
   "5:node3:/dev/nvme2n1"
